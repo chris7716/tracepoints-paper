@@ -1,14 +1,14 @@
 # Tracepoints Paper
 
-This repository contains benchmarking scripts and reports for evaluating the performance of cigzip's tracepoint encoding/decoding algorithms in comparison with FastGA self-alignment.
+This repository contains benchmarking scripts and reports for evaluating the performance of encoding/decoding algorithms in comparison with different kind of alignments.
 
 ## Overview
 
 The benchmark pipeline performs the following steps:
-1. Generate synthetic sequence datasets using WFA2
+1. Generate sequence datasets using generate_dataset tool included in WFA2-lib
 2. Convert sequences to FASTA format
 3. Perform self-alignment using FastGA
-4. Encode alignments to tracepoints using cigzip
+4. Encode alignments to tracepoints using lib_tracepoints library. We use the cigzip tool to interact with lib_tracepoints library.
 5. Decode tracepoints back to alignments
 6. Verify correctness through diff comparison
 
