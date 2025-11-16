@@ -1,10 +1,12 @@
 # Information about decoding
 
-### 6) cigzip encode (max-complexity=32, threads=8) → cigzip-datasets/dataset.standard.N.tp.mc32.paf
+This report explains about the stats on PAF encoding using tracepoints.
+
+### cigzip encode (max-complexity=32, threads=8) → cigzip-datasets/dataset.standard.N.tp.mc32.paf
 
 **Command**:
 ```bash
-../cigzip/target/debug/cigzip encode -p cigzip-datasets/dataset.standard.N.paf --type standard --complexity-metric edit-distance --max-complexity 32 -t 8 > cigzip-datasets/dataset.standard.N.tp.mc32.paf
+cigzip encode -p cigzip-datasets/dataset.standard.N.paf --type standard --complexity-metric edit-distance --max-complexity 32 -t 8 > cigzip-datasets/dataset.standard.N.tp.mc32.paf
 ```
 
 ### Decoding Stats
