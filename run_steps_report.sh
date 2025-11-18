@@ -57,12 +57,12 @@ TS="$(date +%Y%m%d-%H%M%S)"
 REPORT="reports/run_${TYPE}_N${N_ID}_${TS}.md"
 
 # ---------- Filenames (exactly as in your steps) ----------
-SAMPLE_SEQ="wf-dataset/sample.dataset.${N_ID}.seq"
-FASTA="wf-dataset/dataset.${N_ID}.fa"
-FASTGA_PAF="fastga-datasets/dataset.${N_ID}.paf"
+SAMPLE_SEQ="data/simulated/wf-dataset/sample.dataset.${N_ID}.seq"
+FASTA="data/simulated/wf-dataset/dataset.${N_ID}.fa"
+FASTGA_PAF="data/simulated/fastga-datasets/dataset.${N_ID}.paf"
 
-TMP_TYPED="tmp/tmp.${TYPE}.${N_ID}.paf"
-CIGZIP_OUT_TYPED="cigzip-datasets/dataset.${TYPE}.${N_ID}.paf"
+TMP_TYPED="data/simulated/tmp/tmp.${TYPE}.${N_ID}.paf"
+CIGZIP_OUT_TYPED="data/simulated/cigzip-datasets/dataset.${TYPE}.${N_ID}.paf"
 
 name="dataset.${TYPE}.${N_ID}"
 cm="${CM}"
@@ -182,18 +182,18 @@ run_and_capture "5) cigzip decode (type=${TYPE}) → ${CIGZIP_OUT_TYPED}" \
   "$CIGZIP_BIN decode -p ${TMP_TYPED} --type ${TYPE} --complexity-metric edit-distance --sequence-files ${FASTA} > ${CIGZIP_OUT_TYPED}"
 
 # ---------- 6) cigzip encode with max-complexity (tracepoints) ----------
-run_and_capture "6) cigzip encode (max-complexity=${mc}, threads=${THREADS}) → cigzip-datasets/${name}.tp.mc${mc}.paf" \
-  "$CIGZIP_BIN encode -p cigzip-datasets/${name}.paf --type ${TYPE} --complexity-metric ${cm} --max-complexity ${mc} -t ${THREADS} > cigzip-datasets/${name}.tp.mc${mc}.paf"
+run_and_capture "6) cigzip encode (max-complexity=${mc}, threads=${THREADS}) --minimal → cigzip-datasets/${name}.tp.mc${mc}.paf" \
+  "${TIME_BIN} ${CIGZIP_BIN} encode -p data/simulated/cigzip-datasets/${name}.paf --type ${TYPE} --complexity-metric ${cm} --max-complexity ${mc} -t ${THREADS} --minimal > data/simulated/cigzip-datasets/${name}.tp.mc${mc}.paf"
 
 # ---------- 7) cigzip decode + diff verification ----------
 subsection "7) cigzip decode + diff verification"
 echo "**Command**:" >> "$REPORT"
-code_bash "${TIME_BIN} -v ${CIGZIP_BIN} decode -p cigzip-datasets/${name}.tp.mc${mc}.paf --type ${TYPE} --complexity-metric ${cm} --sequence-files ${FASTA} --max-complexity ${mc} -t ${THREADS} > cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf && diff <(sort cigzip-datasets/${name}.paf) <(sort cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf) | wc -l"
+code_bash "${TIME_BIN} -v ${CIGZIP_BIN} decode -p data/simulated/cigzip-datasets/${name}.tp.mc${mc}.paf --type ${TYPE} --complexity-metric ${cm} --sequence-files ${FASTA} --max-complexity ${mc} -t ${THREADS} > data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf && diff <(sort data/simulated/cigzip-datasets/${name}.paf) <(sort data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf) | wc -l"
 echo "**Output**:" >> "$REPORT"
 {
   code_text
-  ${TIME_BIN} -v "${CIGZIP_BIN}" decode -p "cigzip-datasets/${name}.tp.mc${mc}.paf" --type "${TYPE}" --complexity-metric "${cm}" --sequence-files "${FASTA}" --max-complexity "${mc}" -t "${THREADS}" > "cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf"
-  diff <(sort "cigzip-datasets/${name}.paf") <(sort "cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf") | wc -l
+  ${TIME_BIN} -v "${CIGZIP_BIN}" decode -p "data/simulated/cigzip-datasets/${name}.tp.mc${mc}.paf" --type "${TYPE}" --complexity-metric "${cm}" --sequence-files "${FASTA}" --max-complexity "${mc}" -t "${THREADS}" > "data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf"
+  diff <(sort "data/simulated/cigzip-datasets/${name}.paf") <(sort "data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf") | wc -l
   code_end
 } >> "$REPORT"
 
