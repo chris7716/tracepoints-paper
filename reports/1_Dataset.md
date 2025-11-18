@@ -63,3 +63,15 @@ cigzip decode -p tmp/tmp.standard.<N>.paf --type standard --complexity-metric ed
 | N10 | 10000 | 10000 | 0.01  | Standard |
 | N11 | 10000 | 10000 | 0.05  | Standard |
 | N12 | 10000 | 10000 | 0.1   | Standard |
+| N13 | 10000 | 100   | 0.001 | Mixed |
+| N14 | 10000 | 100   | 0.01  | Mixed |
+| N15 | 10000 | 100   | 0.05  | Mixed |
+| N16 | 10000 | 100   | 0.1   | Mixed |
+| N17 | 10000 | 1000  | 0.001 | Mixed |
+| N18 | 10000 | 1000  | 0.01  | Mixed |
+| N19 | 10000 | 1000  | 0.05  | Mixed |
+| N20 | 10000 | 1000  | 0.1   | Mixed |
+| N21 | 10000 | 10000 | 0.001 | Mixed |
+| N22 | 10000 | 10000 | 0.01  | Mixed |
+| N23 | 10000 | 10000 | 0.05  | Mixed |
+| N24 | 10000 | 10000 | 0.1   | Mixed |
