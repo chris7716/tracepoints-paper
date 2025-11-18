@@ -209,7 +209,7 @@ section "Artifacts"
   echo "| ${TMP_TYPED} | $(filesize "${TMP_TYPED}") |"
   echo "| ${CIGZIP_OUT_TYPED} | $(filesize "${CIGZIP_OUT_TYPED}") |"
   echo "| cigzip-datasets/${name}.tp.mc${mc}.paf | $(filesize "data/simulated/cigzip-datasets/${name}.tp.mc${mc}.paf") |"
-  echo "| cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf | $(filesize data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf") |"
+  echo "| cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf | $(filesize "data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf") |"
 } >> "$REPORT"
 
 echo "Report written: ${REPORT}"
