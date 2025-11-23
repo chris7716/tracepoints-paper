@@ -13,7 +13,7 @@ set -euo pipefail
 # ---------- Defaults / paths ----------
 FASTGA_TMP="/home/hasitha/data/projects/fastga-tmp"
 CM="edit-distance"
-MC="32"
+MC="100"
 THREADS="8"
 
 # Tool paths (override via env if needed)
@@ -175,11 +175,11 @@ run_and_capture "3) FastGA self-alignment → ${FASTGA_PAF}" \
 
 # ---------- 4) cigzip encode (type=<type>) ----------
 run_and_capture "4) cigzip encode (type=${TYPE}) → ${TMP_TYPED}" \
-  "$CIGZIP_BIN encode -p ${FASTGA_PAF} --type ${TYPE} --complexity-metric edit-distance --max-complexity 99999999 > ${TMP_TYPED}"
+  "$CIGZIP_BIN encode -p ${FASTGA_PAF} --type standard --complexity-metric edit-distance --max-complexity 99999999 > ${TMP_TYPED}"
 
 # ---------- 5) cigzip decode (type=<type>) ----------
 run_and_capture "5) cigzip decode (type=${TYPE}) → ${CIGZIP_OUT_TYPED}" \
-  "$CIGZIP_BIN decode -p ${TMP_TYPED} --type ${TYPE} --complexity-metric edit-distance --sequence-files ${FASTA} > ${CIGZIP_OUT_TYPED}"
+  "$CIGZIP_BIN decode -p ${TMP_TYPED} --type standard --complexity-metric edit-distance --sequence-files ${FASTA} > ${CIGZIP_OUT_TYPED}"
 
 # ---------- 6) cigzip encode with max-complexity (tracepoints) ----------
 run_and_capture "6) cigzip encode (max-complexity=${mc}, threads=${THREADS}) --minimal → cigzip-datasets/${name}.tp.mc${mc}.paf" \
