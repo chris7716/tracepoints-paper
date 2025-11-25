@@ -87,3 +87,15 @@ cigzip decode -p tmp/tmp.standard.<N>.paf --type standard --complexity-metric ed
 | N34 | 10000 | 10000 | 0.01  | Mixed |
 | N35 | 10000 | 10000 | 0.05  | Mixed |
 | N36 | 10000 | 10000 | 0.1   | Mixed |
+| N37 | 10000 | 100   | 0.001 | FastGA |
+| N38 | 10000 | 100   | 0.01  | FastGA |
+| N39 | 10000 | 100   | 0.05  | FastGA |
+| N40 | 10000 | 100   | 0.1   | FastGA |
+| N41 | 10000 | 1000  | 0.001 | FastGA |
+| N42 | 10000 | 1000  | 0.01  | FastGA |
+| N43 | 10000 | 1000  | 0.05  | FastGA |
+| N44 | 10000 | 1000  | 0.1   | FastGA |
+| N45 | 10000 | 10000 | 0.001 | FastGA |
+| N46 | 10000 | 10000 | 0.01  | FastGA |
+| N47 | 10000 | 10000 | 0.05  | FastGA |
+| N48 | 10000 | 10000 | 0.1   | FastGA |
