@@ -6,8 +6,26 @@ This report explains about the stats on PAF encoding using tracepoints.
 
 **Command**:
 ```bash
-cigzip encode -p cigzip-datasets/dataset.standard.N.paf --type standard --complexity-metric edit-distance --max-complexity 32 -t 8 > cigzip-datasets/dataset.standard.N.tp.mc32.paf
+cigzip encode -p cigzip-datasets/dataset.standard.N.paf --type <TP_TYPE> --complexity-metric edit-distance --max-complexity 32 -t 8 > cigzip-datasets/dataset.<TP_TYPE>.N.tp.mc32.paf
 ```
+### Tracepoint Types
+
+#### Standard
+
+Tracepoints are emitted when maximum difference is reached for a selected segment of query and target and then stores (query_length, target_length).
+
+#### Mixed
+
+Tracepoints are emitted similar to standard type. In addition to (query_length, target_length) pairs, length of special operations are stored in the form of (char, length).
+
+#### Variable
+
+Tracepoints are emitted similar to standard type. If the query length and target length are the same, we would only store one value. (query_length, Some(target_length)).
+
+#### FastGA
+
+Re-implementation of Gene Myer's tracepoints. Emitted based on the trace space. Stores (differences between target and query, target advancements)
+
 
 ### Decoding Stats
 
