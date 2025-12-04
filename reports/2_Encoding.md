@@ -29,7 +29,7 @@ Re-implementation of Gene Myer's tracepoints. Emitted based on the trace space. 
 
 ### Decoding Stats
 
-| Dataset | Record Count | Sequence Length | Error | Tracepoint Type | CPU Time (s) | Average CPU Time (Per Aignment) (ms) | Run Time (s) | Average Runtime (per aignment) (ms) | Peak Memory (KB) | Total Tracepoints | Tracepoints in Bytes |
+| Dataset | Record Count | Sequence Length | Error | Tracepoint Type | CPU Time (s) | Average CPU Time (Per Aignment) (ms) | Run Time (s) | Average Runtime (per aignment) (ms) | Peak Memory (MB) | Total Tracepoints | Tracepoints in Bytes |
 |---------|--------------|-----------------|-------|-----------------|--------------|--------------------------------------|--------------|-------------------------------------|------------------|--------------|----------|
 | N1 | 10000 | 100   | 0.001 | Standard | 0.47 | 0.047 | 0.17 | 0.017 | 6.55 | 57952 | 927232 |
 | N2 | 10000 | 100   | 0.01  | Standard | 0.46 | 0.046 | 0.16 | 0.016 | 6.66 | 57876 | 926016 |

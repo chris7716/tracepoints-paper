@@ -13,7 +13,7 @@ The PAF file which was encoded using cigzip, is decoded using the following step
 
 ### Decoding Stats
 
-| Dataset | Record Count | Sequence Length | Error | Tracepoint Type | CPU Time (s) | Average CPU Time (Per Aignment) (ms) | Run Time (s) | Average Runtime (per aignment) (ms) | Peak Memory (KB) | 
+| Dataset | Record Count | Sequence Length | Error | Tracepoint Type | CPU Time (s) | Average CPU Time (Per Aignment) (ms) | Run Time (s) | Average Runtime (per aignment) (ms) | Peak Memory (MB) | 
 |---------|--------------|-----------------|-------|-----------------|--------------|--------------------------------------|--------------|-------------------------------------|------------------|
 | N1 | 10000 | 100   | 0.001 | Standard | 367.93 | 36.79 | 46.22 | 4.62 | 33.4 |
 | N2 | 10000 | 100   | 0.01  | Standard | 367.92 | 36.79 | 46.23 | 4.62 | 35.5 |
