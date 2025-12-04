@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 
 # Read CSV file
-df = pd.read_csv('encoding.csv')
+df = pd.read_csv('csv/encoding.csv')
 
 # Clean column names (remove extra spaces)
 df.columns = df.columns.str.strip()

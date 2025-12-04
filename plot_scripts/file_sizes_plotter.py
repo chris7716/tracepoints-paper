@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 
 # Read CSV file
-df = pd.read_csv('file_sizes.csv')
+df = pd.read_csv('csv/file_sizes.csv')
 
 # Print column names to debug
 print("Column names in CSV:")
