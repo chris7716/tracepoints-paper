@@ -114,8 +114,9 @@ for idx, error_rate in enumerate(error_rates):
     seq_lengths = sorted(error_data['Sequence Length'].unique())
     tracepoint_types = ['Standard', 'Mixed', 'Variable', 'FastGA']
     x_positions = np.arange(len(seq_lengths))
+    width = 0.2
     
-    for tp_type in tracepoint_types:
+    for i, tp_type in enumerate(tracepoint_types):
         tp_data = error_data[error_data['Tracepoint Type'] == tp_type]
         
         if not tp_data.empty:
@@ -129,19 +130,18 @@ for idx, error_rate in enumerate(error_rates):
                     runtimes.append(0)
             
             if idx == 0:
-                line = ax.plot(x_positions, runtimes, marker=markers[tp_type], 
-                             label=f'{tp_type}', color=colors[tp_type], 
-                             linewidth=2, markersize=8, alpha=0.8)
-                handles2.append(line[0])
+                bar = ax.bar(x_positions + i*width, runtimes, width, 
+                           label=f'{tp_type}', color=colors[tp_type], alpha=0.8)
+                handles2.append(bar)
                 labels2.append(f'{tp_type}')
             else:
-                ax.plot(x_positions, runtimes, marker=markers[tp_type], 
-                       color=colors[tp_type], linewidth=2, markersize=8, alpha=0.8)
+                ax.bar(x_positions + i*width, runtimes, width, 
+                       color=colors[tp_type], alpha=0.8)
     
     ax.set_xlabel('Sequence Length (bp)')
     ax.set_ylabel('Average Runtime (ms)')
     ax.set_title(f'Error Rate: {error_rate}')
-    ax.set_xticks(x_positions)
+    ax.set_xticks(x_positions + width*1.5)
     ax.set_xticklabels([f'{sl}' for sl in seq_lengths])
     ax.grid(True, alpha=0.3)
     ax.set_ylim(y_min_runtime, y_max_runtime)
@@ -181,8 +181,9 @@ for idx, error_rate in enumerate(error_rates):
     seq_lengths = sorted(error_data['Sequence Length'].unique())
     tracepoint_types = ['Standard', 'Mixed', 'Variable', 'FastGA']
     x_positions = np.arange(len(seq_lengths))
+    width = 0.2
     
-    for tp_type in tracepoint_types:
+    for i, tp_type in enumerate(tracepoint_types):
         tp_data = error_data[error_data['Tracepoint Type'] == tp_type]
         
         if not tp_data.empty:
@@ -196,19 +197,18 @@ for idx, error_rate in enumerate(error_rates):
                     memory_usage.append(0)
             
             if idx == 0:
-                line = ax.plot(x_positions, memory_usage, marker=markers[tp_type], 
-                             label=f'{tp_type}', color=colors[tp_type], 
-                             linewidth=2, markersize=8, alpha=0.8)
-                handles3.append(line[0])
+                bar = ax.bar(x_positions + i*width, memory_usage, width, 
+                           label=f'{tp_type}', color=colors[tp_type], alpha=0.8)
+                handles3.append(bar)
                 labels3.append(f'{tp_type}')
             else:
-                ax.plot(x_positions, memory_usage, marker=markers[tp_type], 
-                       color=colors[tp_type], linewidth=2, markersize=8, alpha=0.8)
+                ax.bar(x_positions + i*width, memory_usage, width, 
+                       color=colors[tp_type], alpha=0.8)
     
     ax.set_xlabel('Sequence Length (bp)')
     ax.set_ylabel('Peak Memory (MB)')
     ax.set_title(f'Error Rate: {error_rate}')
-    ax.set_xticks(x_positions)
+    ax.set_xticks(x_positions + width*1.5)
     ax.set_xticklabels([f'{sl}' for sl in seq_lengths])
     ax.grid(True, alpha=0.3)
     ax.set_ylim(y_min_memory, y_max_memory)
