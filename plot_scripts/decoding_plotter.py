@@ -25,7 +25,7 @@ all_cpu_times = []
 for error_rate in error_rates:
     error_data = df[df['Error'] == error_rate]
     seq_lengths = sorted(error_data['Sequence Length'].unique())
-    tracepoint_types = ['Standard', 'Mixed', 'Variable', 'FastGA']
+    tracepoint_types = ['Standard', 'FastGA']  # Changed here
     
     for tp_type in tracepoint_types:
         tp_data = error_data[error_data['Tracepoint Type'] == tp_type]
@@ -45,7 +45,7 @@ for idx, error_rate in enumerate(error_rates):
     ax = axes1[positions[idx]]
     error_data = df[df['Error'] == error_rate]
     seq_lengths = sorted(error_data['Sequence Length'].unique())
-    tracepoint_types = ['Standard', 'Mixed', 'Variable', 'FastGA']
+    tracepoint_types = ['Standard', 'FastGA']  # Changed here
     x_positions = np.arange(len(seq_lengths))
     
     for tp_type in tracepoint_types:
@@ -92,7 +92,7 @@ all_runtimes = []
 for error_rate in error_rates:
     error_data = df[df['Error'] == error_rate]
     seq_lengths = sorted(error_data['Sequence Length'].unique())
-    tracepoint_types = ['Standard', 'Mixed', 'Variable', 'FastGA']
+    tracepoint_types = ['Standard', 'FastGA']  # Changed here
     
     for tp_type in tracepoint_types:
         tp_data = error_data[error_data['Tracepoint Type'] == tp_type]
@@ -112,9 +112,9 @@ for idx, error_rate in enumerate(error_rates):
     ax = axes2[positions[idx]]
     error_data = df[df['Error'] == error_rate]
     seq_lengths = sorted(error_data['Sequence Length'].unique())
-    tracepoint_types = ['Standard', 'Mixed', 'Variable', 'FastGA']
+    tracepoint_types = ['Standard', 'FastGA']  # Changed here
     x_positions = np.arange(len(seq_lengths))
-    width = 0.2
+    width = 0.3  # Increased width for 2 types
     
     for i, tp_type in enumerate(tracepoint_types):
         tp_data = error_data[error_data['Tracepoint Type'] == tp_type]
@@ -130,23 +130,24 @@ for idx, error_rate in enumerate(error_rates):
                     runtimes.append(0)
             
             if idx == 0:
-                bar = ax.bar(x_positions + i*width, runtimes, width, 
+                bar = ax.bar(x_positions + i*width - width/2, runtimes, width, 
                            label=f'{tp_type}', color=colors[tp_type], alpha=0.8)
                 handles2.append(bar)
                 labels2.append(f'{tp_type}')
             else:
-                ax.bar(x_positions + i*width, runtimes, width, 
+                ax.bar(x_positions + i*width - width/2, runtimes, width, 
                        color=colors[tp_type], alpha=0.8)
     
-    ax.set_xlabel('Sequence Length (bp)')
-    ax.set_ylabel('Average Runtime (ms)')
+    ax.set_xlabel('Sequence Length (bp)', fontsize=18)
+    ax.set_ylabel('Average Runtime (ms)', fontsize=18)
     ax.set_title(f'Error Rate: {error_rate}')
-    ax.set_xticks(x_positions + width*1.5)
-    ax.set_xticklabels([f'{sl}' for sl in seq_lengths])
+    ax.set_xticks(x_positions)  # Center on sequence lengths
+    ax.set_xticklabels([f'{sl}' for sl in seq_lengths], fontsize=15)
     ax.grid(True, alpha=0.3)
     ax.set_ylim(y_min_runtime, y_max_runtime)
 
-fig2.legend(handles2, labels2, loc='center right', bbox_to_anchor=(1.0, 0.5), fontsize=10)
+# fig2.legend(handles2, labels2, loc='center right', bbox_to_anchor=(1.0, 0.5), fontsize=14)
+plt.figlegend(handles2, labels2, loc='upper center', bbox_to_anchor=(0.5, 0.95), fontsize=14, ncol=2)
 plt.tight_layout()
 plt.subplots_adjust(right=0.85)
 plt.show()
@@ -159,7 +160,7 @@ all_memory = []
 for error_rate in error_rates:
     error_data = df[df['Error'] == error_rate]
     seq_lengths = sorted(error_data['Sequence Length'].unique())
-    tracepoint_types = ['Standard', 'Mixed', 'Variable', 'FastGA']
+    tracepoint_types = ['Standard', 'FastGA']  # Changed here
     
     for tp_type in tracepoint_types:
         tp_data = error_data[error_data['Tracepoint Type'] == tp_type]
@@ -179,9 +180,9 @@ for idx, error_rate in enumerate(error_rates):
     ax = axes3[positions[idx]]
     error_data = df[df['Error'] == error_rate]
     seq_lengths = sorted(error_data['Sequence Length'].unique())
-    tracepoint_types = ['Standard', 'Mixed', 'Variable', 'FastGA']
+    tracepoint_types = ['Standard', 'FastGA']  # Changed here
     x_positions = np.arange(len(seq_lengths))
-    width = 0.2
+    width = 0.3  # Increased width for 2 types
     
     for i, tp_type in enumerate(tracepoint_types):
         tp_data = error_data[error_data['Tracepoint Type'] == tp_type]
@@ -197,18 +198,18 @@ for idx, error_rate in enumerate(error_rates):
                     memory_usage.append(0)
             
             if idx == 0:
-                bar = ax.bar(x_positions + i*width, memory_usage, width, 
+                bar = ax.bar(x_positions + i*width - width/2, memory_usage, width, 
                            label=f'{tp_type}', color=colors[tp_type], alpha=0.8)
                 handles3.append(bar)
                 labels3.append(f'{tp_type}')
             else:
-                ax.bar(x_positions + i*width, memory_usage, width, 
+                ax.bar(x_positions + i*width - width/2, memory_usage, width, 
                        color=colors[tp_type], alpha=0.8)
     
     ax.set_xlabel('Sequence Length (bp)')
     ax.set_ylabel('Peak Memory (MB)')
     ax.set_title(f'Error Rate: {error_rate}')
-    ax.set_xticks(x_positions + width*1.5)
+    ax.set_xticks(x_positions)  # Center on sequence lengths
     ax.set_xticklabels([f'{sl}' for sl in seq_lengths])
     ax.grid(True, alpha=0.3)
     ax.set_ylim(y_min_memory, y_max_memory)
@@ -226,7 +227,7 @@ all_total_cpu = []
 for error_rate in error_rates:
     error_data = df[df['Error'] == error_rate]
     seq_lengths = sorted(error_data['Sequence Length'].unique())
-    tracepoint_types = ['Standard', 'Mixed', 'Variable', 'FastGA']
+    tracepoint_types = ['Standard', 'FastGA']  # Changed here
     
     for tp_type in tracepoint_types:
         tp_data = error_data[error_data['Tracepoint Type'] == tp_type]
@@ -246,7 +247,7 @@ for idx, error_rate in enumerate(error_rates):
     ax = axes4[positions[idx]]
     error_data = df[df['Error'] == error_rate]
     seq_lengths = sorted(error_data['Sequence Length'].unique())
-    tracepoint_types = ['Standard', 'Mixed', 'Variable', 'FastGA']
+    tracepoint_types = ['Standard', 'FastGA']  # Changed here
     x_positions = np.arange(len(seq_lengths))
     
     for tp_type in tracepoint_types:
@@ -293,7 +294,7 @@ print("-" * 100)
 
 for error_rate in error_rates:
     error_data = df[df['Error'] == error_rate]
-    for tp_type in ['Standard', 'Mixed', 'Variable', 'FastGA']:
+    for tp_type in ['Standard', 'FastGA']:  # Changed here
         tp_data = error_data[error_data['Tracepoint Type'] == tp_type]
         if not tp_data.empty:
             for sl in sorted(tp_data['Sequence Length'].unique()):

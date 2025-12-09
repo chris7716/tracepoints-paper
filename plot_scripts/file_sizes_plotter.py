@@ -31,7 +31,7 @@ for idx, error_rate in enumerate(error_rates):
     
     # Get unique sequence lengths and tracepoint types
     seq_lengths = sorted(error_data['Sequence Length'].unique())
-    tracepoint_types = ['Standard', 'Mixed', 'Variable', 'FastGA']
+    tracepoint_types = ['Standard', 'FastGA']
     
     x_positions = np.arange(len(seq_lengths))
     
@@ -83,7 +83,7 @@ all_ratios = []
 for error_rate in error_rates:
     error_data = df[df['Error'] == error_rate]
     seq_lengths = sorted(error_data['Sequence Length'].unique())
-    tracepoint_types = ['Standard', 'Mixed', 'Variable', 'FastGA']
+    tracepoint_types = ['Standard', 'FastGA']
     
     for tp_type in tracepoint_types:
         tp_data = error_data[error_data['Tracepoint Type'] == tp_type]
@@ -113,11 +113,11 @@ for idx, error_rate in enumerate(error_rates):
     
     # Get unique sequence lengths and tracepoint types
     seq_lengths = sorted(error_data['Sequence Length'].unique())
-    tracepoint_types = ['Standard', 'Mixed', 'Variable', 'FastGA']
+    tracepoint_types = ['Standard', 'FastGA']
     
     # Create grouped bar chart
     x = np.arange(len(seq_lengths))
-    width = 0.08
+    width = 0.3  # Increase width since we only have 2 types
     
     for i, tp_type in enumerate(tracepoint_types):
         tp_data = error_data[error_data['Tracepoint Type'] == tp_type]
@@ -142,18 +142,18 @@ for idx, error_rate in enumerate(error_rates):
             
             # Only collect legend info from first subplot
             if idx == 0:
-                bar = plt.bar(x + i*width*2 + width, ratios, width, 
+                bar = plt.bar(x + i*width - width/2, ratios, width, 
                            label=f'{tp_type} Tracepoint', color=colors[tp_type], alpha=1.0, hatch='//')
                 handles.append(bar)
                 labels.append(f'{tp_type} Tracepoint')
             else:
-                plt.bar(x + i*width*2 + width, ratios, width, 
+                plt.bar(x + i*width - width/2, ratios, width, 
                        color=colors[tp_type], alpha=1.0, hatch='//')
     
-    plt.xlabel('Sequence Length (bp)')
-    plt.ylabel('PAF with Tracepoints / PAF with Cigar')
+    plt.xlabel('Sequence Length (bp)', fontsize=18)
+    plt.ylabel('PAF with Tracepoints / PAF with Cigar', fontsize=14)
     plt.title(f'Error Rate: {error_rate}')
-    plt.xticks(x + width*3.5, [f'{sl}' for sl in seq_lengths])
+    plt.xticks(x, [f'{sl}' for sl in seq_lengths], fontsize=15)  # Center x-ticks on sequence length positions
     plt.grid(True, alpha=0.3)
     
     # Set consistent Y scale for all subplots
@@ -163,12 +163,13 @@ for idx, error_rate in enumerate(error_rates):
     plt.axhline(y=1, color='black', linestyle='--', alpha=0.5, linewidth=1)
 
 # Add single legend outside the subplots
-plt.figlegend(handles, labels, loc='center right', bbox_to_anchor=(1.0, 0.5), fontsize=10)
+# plt.figlegend(handles, labels, loc='center right', bbox_to_anchor=(1.0, 0.5), fontsize=14)
+plt.figlegend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.95), fontsize=14, ncol=2)
 
 plt.tight_layout()
 plt.suptitle('Compression Ratios: Tracepoint Encoded PAF vs FastGA PAF', 
              fontsize=16, fontweight='bold', y=0.98)
-plt.subplots_adjust(right=0.85)  # Make room for legend
+plt.subplots_adjust(top=0.85)  # Make room for legend
 plt.show()
 
 # Create compression ratio analysis
@@ -179,7 +180,7 @@ print("-" * 80)
 
 for error_rate in error_rates:
     error_data = df[df['Error'] == error_rate]
-    for tp_type in ['Standard', 'Mixed', 'Variable', 'FastGA']:
+    for tp_type in ['Standard', 'FastGA']:
         tp_data = error_data[error_data['Tracepoint Type'] == tp_type]
         if not tp_data.empty:
             for sl in sorted(tp_data['Sequence Length'].unique()):
