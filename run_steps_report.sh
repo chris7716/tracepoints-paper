@@ -13,7 +13,7 @@ set -euo pipefail
 # ---------- Defaults / paths ----------
 FASTGA_TMP="/home/hasitha/data/projects/fastga-tmp"
 CM="edit-distance"
-MC="100"
+MC="32"
 THREADS="8"
 
 # Tool paths (override via env if needed)
