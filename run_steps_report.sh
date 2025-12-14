@@ -76,6 +76,10 @@ code_bash()   { echo '```bash' >> "$REPORT"; echo "$1" >> "$REPORT"; echo '```' 
 code_text()   { echo '```text' >> "$REPORT"; }
 code_end()    { echo '```' >> "$REPORT"; }
 filesize()    { [[ -f "$1" ]] && stat -c%s "$1" 2>/dev/null || wc -c <"$1" 2>/dev/null || echo "n/a"; }
+filesize_mb() { 
+  local size_bytes=$(stat -c%s "$1" 2>/dev/null || wc -c <"$1" 2>/dev/null || echo "0")
+  awk "BEGIN {printf \"%.2f\", $size_bytes/1024/1024}"
+}
 
 # Capture stdout+stderr of a command into the report under **Output**
 run_and_capture() {
@@ -186,16 +190,20 @@ run_and_capture "6) cigzip encode (max-complexity=${mc}, threads=${THREADS}) --m
   "${TIME_BIN} ${CIGZIP_BIN} encode -p data/simulated/cigzip-datasets/${name}.paf --type ${TYPE} --complexity-metric ${cm} --max-complexity ${mc} -t ${THREADS} --minimal > data/simulated/cigzip-datasets/${name}.tp.mc${mc}.paf"
 
 # ---------- 7) cigzip decode + diff verification ----------
-subsection "7) cigzip decode + diff verification"
-echo "**Command**:" >> "$REPORT"
-code_bash "${TIME_BIN} -v ${CIGZIP_BIN} decode -p data/simulated/cigzip-datasets/${name}.tp.mc${mc}.paf --type ${TYPE} --complexity-metric ${cm} --sequence-files ${FASTA} --max-complexity ${mc} -t ${THREADS} > data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf && diff <(sort data/simulated/cigzip-datasets/${name}.paf) <(sort data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf) | wc -l"
-echo "**Output**:" >> "$REPORT"
-{
-  code_text
-  ${TIME_BIN} -v "${CIGZIP_BIN}" decode -p "data/simulated/cigzip-datasets/${name}.tp.mc${mc}.paf" --type "${TYPE}" --complexity-metric "${cm}" --sequence-files "${FASTA}" --max-complexity "${mc}" -t "${THREADS}" > "data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf"
-  diff <(sort "data/simulated/cigzip-datasets/${name}.paf") <(sort "data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf") | wc -l
-  code_end
-} >> "$REPORT"
+#subsection "7) cigzip decode + diff verification"
+#echo "**Command**:" >> "$REPORT"
+#code_bash "${TIME_BIN} -v ${CIGZIP_BIN} decode -p data/simulated/cigzip-datasets/${name}.tp.mc${mc}.paf --type ${TYPE} --complexity-metric ${cm} --sequence-files ${FASTA} --max-complexity ${mc} -t ${THREADS} > data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf && diff <(sort data/simulated/cigzip-datasets/${name}.paf) <(sort data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf) | wc -l"
+#echo "**Output**:" >> "$REPORT"
+#{
+#  code_text
+#  ${TIME_BIN} -v "${CIGZIP_BIN}" decode -p "data/simulated/cigzip-datasets/${name}.tp.mc${mc}.paf" --type "${TYPE}" --complexity-metric "${cm}" --sequence-files "${FASTA}" --max-complexity "${mc}" -t "${THREADS}" > "data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf"
+#  diff <(sort "data/simulated/cigzip-datasets/${name}.paf") <(sort "data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf") | wc -l
+#  code_end
+#} >> "$REPORT"
+
+# ---------- 7) cigzip decode + diff verification ----------
+run_and_capture "7) cigzip decode + diff verification" \
+  "${TIME_BIN} -v ${CIGZIP_BIN} decode -p data/simulated/cigzip-datasets/${name}.tp.mc${mc}.paf --type ${TYPE} --complexity-metric ${cm} --sequence-files ${FASTA} --max-complexity ${mc} -t ${THREADS} > data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf && diff <(sort data/simulated/cigzip-datasets/${name}.paf) <(sort data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf) | wc -l"
 
 # ---------- Artifacts summary ----------
 section "Artifacts"
@@ -214,3 +222,12 @@ section "Artifacts"
 
 echo "Report written: ${REPORT}"
 
+section "Artifacts MB"
+{
+  echo
+  echo "| ${SAMPLE_SEQ} | ${FASTA} | ${FASTGA_PAF} | ${TMP_TYPED} | ${CIGZIP_OUT_TYPED} | cigzip-datasets/${name}.tp.mc${mc}.paf | cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf |"
+  echo "|---|---|---|---|---|---|---|"
+  echo "| $(filesize_mb "${SAMPLE_SEQ}") | $(filesize_mb "${FASTA}") | $(filesize_mb "${FASTGA_PAF}") | $(filesize_mb "${TMP_TYPED}") | $(filesize_mb "${CIGZIP_OUT_TYPED}") | $(filesize_mb "data/simulated/cigzip-datasets/${name}.tp.mc${mc}.paf") | $(filesize_mb "data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf") |"
+} >> "$REPORT"
+
+echo "Report written: ${REPORT}"
