@@ -76,10 +76,12 @@ tracepoint_types = sorted(df['Tracepoint Type'].unique())
 print(f"Actual tracepoint types: {tracepoint_types}")
 
 # Create color map for actual types
-colors = {}
-color_list = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
-for i, tp_type in enumerate(tracepoint_types):
-    colors[tp_type] = color_list[i % len(color_list)]
+colors = {
+    'fastga': '#d62728',     # Red
+    'mixed': '#ff7f0e',      # Orange  
+    'standard': '#1f77b4',   # Blue
+    'variable': '#2ca02c'    # Green
+}
 
 all_ratios = []  # For calculating global min/max
 
