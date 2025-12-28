@@ -10,23 +10,40 @@ df.columns = df.columns.str.strip()
 
 print("Column names in CSV:")
 print(df.columns.tolist())
+print("\nUnique values in data:")
+print("Error rates:", sorted(df['Error'].unique()))
+print("Tracepoint types:", sorted(df['Tracepoint Type'].unique()))
+print("Sequence lengths:", sorted(df['Sequence Length'].unique()))
+
+# Use actual data values
+error_rates = sorted(df['Error'].unique())  # [0.01, 0.05, 0.1, 0.2]
+tracepoint_types = sorted(df['Tracepoint Type'].unique())  # ['fastga', 'mixed', 'standard', 'variable']
 
 # Create subplots for each error rate
 fig, axes = plt.subplots(2, 2, figsize=(16, 12))
 fig.suptitle('Number of Tracepoints by Tracepoint Type', fontsize=16, fontweight='bold')
 
-error_rates = [0.001, 0.01, 0.05, 0.1]
 positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
 
-colors = {'Standard': '#1f77b4', 'Mixed': '#ff7f0e', 'Variable': '#2ca02c', 'FastGA': '#d62728'}
-markers = {'Standard': 'o', 'Mixed': 's', 'Variable': '^', 'FastGA': 'd'}
+# Color and marker mapping for actual types
+colors = {
+    'standard': '#1f77b4',   # Blue
+    'mixed': '#ff7f0e',      # Orange
+    'variable': '#2ca02c',   # Green
+    'fastga': '#d62728'      # Red
+}
+markers = {
+    'standard': 'o',         # Circle
+    'mixed': 's',            # Square
+    'variable': '^',         # Triangle
+    'fastga': 'd'            # Diamond
+}
 
 # Calculate global min and max for consistent Y scale
 all_tracepoints = []
 for error_rate in error_rates:
     error_data = df[df['Error'] == error_rate]
     seq_lengths = sorted(error_data['Sequence Length'].unique())
-    tracepoint_types = ['Standard', 'Mixed', 'Variable', 'FastGA']
     
     for tp_type in tracepoint_types:
         tp_data = error_data[error_data['Tracepoint Type'] == tp_type]
@@ -36,12 +53,10 @@ for error_rate in error_rates:
                 if not sl_data.empty:
                     tracepoints = sl_data['Total Tracepoints'].values[0] / 1000000  # Convert to millions
                     all_tracepoints.append(tracepoints)
-                else:
-                    all_tracepoints.append(0)
 
 # Set Y scale limits with some padding
 y_min = 0
-y_max = max(all_tracepoints) * 1.1
+y_max = max(all_tracepoints) * 1.1 if all_tracepoints else 10
 
 # Store handles and labels for single legend
 handles = []
@@ -53,12 +68,11 @@ for idx, error_rate in enumerate(error_rates):
     # Filter data for current error rate
     error_data = df[df['Error'] == error_rate]
     
-    # Get unique sequence lengths and tracepoint types
+    # Get unique sequence lengths
     seq_lengths = sorted(error_data['Sequence Length'].unique())
-    tracepoint_types = ['Standard', 'Mixed', 'Variable', 'FastGA']
     
     x_positions = np.arange(len(seq_lengths))
-    width = 0.2
+    width = 0.8 / len(tracepoint_types)  # Adjust width based on number of types
     
     for i, tp_type in enumerate(tracepoint_types):
         tp_data = error_data[error_data['Tracepoint Type'] == tp_type]
@@ -74,20 +88,22 @@ for idx, error_rate in enumerate(error_rates):
                 else:
                     tracepoint_counts.append(0)
             
+            offset = i * width - width * (len(tracepoint_types) - 1) / 2
+            
             # Only collect legend info from first subplot
             if idx == 0:
-                bar = ax.bar(x_positions + i*width, tracepoint_counts, width, 
-                           label=f'{tp_type}', color=colors[tp_type], alpha=0.8)
+                bar = ax.bar(x_positions + offset, tracepoint_counts, width, 
+                           label=f'{tp_type.capitalize()}', color=colors[tp_type], alpha=0.8)
                 handles.append(bar)
-                labels.append(f'{tp_type}')
+                labels.append(f'{tp_type.capitalize()}')
             else:
-                ax.bar(x_positions + i*width, tracepoint_counts, width, 
+                ax.bar(x_positions + offset, tracepoint_counts, width, 
                        color=colors[tp_type], alpha=0.8)
     
     ax.set_xlabel('Sequence Length (bp)')
     ax.set_ylabel('Number of Tracepoints (Millions)')
     ax.set_title(f'Error Rate: {error_rate}')
-    ax.set_xticks(x_positions + width*1.5)
+    ax.set_xticks(x_positions)
     ax.set_xticklabels([f'{sl}' for sl in seq_lengths])
     ax.grid(True, alpha=0.3)
     
@@ -109,7 +125,7 @@ print("-" * 80)
 
 for error_rate in error_rates:
     error_data = df[df['Error'] == error_rate]
-    for tp_type in ['Standard', 'Mixed', 'Variable', 'FastGA']:
+    for tp_type in tracepoint_types:
         tp_data = error_data[error_data['Tracepoint Type'] == tp_type]
         if not tp_data.empty:
             for sl in sorted(tp_data['Sequence Length'].unique()):
@@ -117,10 +133,25 @@ for error_rate in error_rates:
                 if not sl_data.empty:
                     tracepoints = sl_data['Total Tracepoints'].values[0]
                     bytes_count = sl_data['Tracepoints in Bytes'].values[0]
-                    print(f"{error_rate:<6.3f} {tp_type:<8} {sl:<7} {tracepoints:<12} {bytes_count:<12}")
+                    print(f"{error_rate:<6.2f} {tp_type:<8} {sl:<7} {tracepoints:<12} {bytes_count:<12}")
 
 # Create a second plot showing tracepoints in bytes
 plt.figure(figsize=(16, 12))
+
+# Calculate global scale for tracepoints bytes plot
+all_bytes = []
+for error_rate in error_rates:
+    error_data = df[df['Error'] == error_rate]
+    for tp_type in tracepoint_types:
+        tp_data = error_data[error_data['Tracepoint Type'] == tp_type]
+        if not tp_data.empty:
+            for sl in sorted(error_data['Sequence Length'].unique()):
+                sl_data = tp_data[tp_data['Sequence Length'] == sl]
+                if not sl_data.empty:
+                    bytes_count = sl_data['Tracepoints in Bytes'].values[0] / 1024 / 1024  # Convert to MB
+                    all_bytes.append(bytes_count)
+
+y_max_bytes = max(all_bytes) * 1.1 if all_bytes else 200
 
 # Store handles and labels for single legend (second plot)
 handles2 = []
@@ -132,12 +163,11 @@ for idx, error_rate in enumerate(error_rates):
     # Filter data for current error rate
     error_data = df[df['Error'] == error_rate]
     
-    # Get unique sequence lengths and tracepoint types
+    # Get unique sequence lengths
     seq_lengths = sorted(error_data['Sequence Length'].unique())
-    tracepoint_types = ['Standard', 'Mixed', 'Variable', 'FastGA']
     
     x_positions = np.arange(len(seq_lengths))
-    width = 0.2
+    width = 0.8 / len(tracepoint_types)
     
     for i, tp_type in enumerate(tracepoint_types):
         tp_data = error_data[error_data['Tracepoint Type'] == tp_type]
@@ -153,21 +183,24 @@ for idx, error_rate in enumerate(error_rates):
                 else:
                     bytes_counts.append(0)
             
+            offset = i * width - width * (len(tracepoint_types) - 1) / 2
+            
             # Only collect legend info from first subplot
             if idx == 0:
-                bar = plt.bar(x_positions + i*width, bytes_counts, width, 
-                           label=f'{tp_type}', color=colors[tp_type], alpha=0.8)
+                bar = plt.bar(x_positions + offset, bytes_counts, width, 
+                           label=f'{tp_type.capitalize()}', color=colors[tp_type], alpha=0.8)
                 handles2.append(bar)
-                labels2.append(f'{tp_type}')
+                labels2.append(f'{tp_type.capitalize()}')
             else:
-                plt.bar(x_positions + i*width, bytes_counts, width, 
+                plt.bar(x_positions + offset, bytes_counts, width, 
                        color=colors[tp_type], alpha=0.8)
     
     plt.xlabel('Sequence Length (bp)')
     plt.ylabel('Tracepoints Size (MB)')
     plt.title(f'Error Rate: {error_rate}')
-    plt.xticks(x_positions + width*1.5, [f'{sl}' for sl in seq_lengths])
+    plt.xticks(x_positions, [f'{sl}' for sl in seq_lengths])
     plt.grid(True, alpha=0.3)
+    plt.ylim(0, y_max_bytes)
 
 # Add single legend outside the subplots for second plot
 plt.figlegend(handles2, labels2, loc='center right', bbox_to_anchor=(1.0, 0.5), fontsize=10)
@@ -179,19 +212,16 @@ plt.show()
 
 # Create a third plot showing average CPU time per alignment
 fig3, axes3 = plt.subplots(2, 2, figsize=(16, 12))
-fig3.suptitle('Average CPU Time per Alignment by Tracepoint Type', fontsize=16, fontweight='bold')
+fig3.suptitle('Average CPU Time per Alignment by Tracepoint Type (Encoding)', fontsize=16, fontweight='bold')
 
 # Calculate global min and max for consistent Y scale
 all_cpu_times = []
 for error_rate in error_rates:
     error_data = df[df['Error'] == error_rate]
-    seq_lengths = sorted(error_data['Sequence Length'].unique())
-    tracepoint_types = ['Standard', 'Mixed', 'Variable', 'FastGA']
-    
     for tp_type in tracepoint_types:
         tp_data = error_data[error_data['Tracepoint Type'] == tp_type]
         if not tp_data.empty:
-            for sl in seq_lengths:
+            for sl in sorted(error_data['Sequence Length'].unique()):
                 sl_data = tp_data[tp_data['Sequence Length'] == sl]
                 if not sl_data.empty:
                     cpu_time = sl_data['Average CPU Time (Per Aignment) (ms)'].values[0]
@@ -199,7 +229,7 @@ for error_rate in error_rates:
 
 # Set Y scale limits with some padding
 y_min_cpu = 0
-y_max_cpu = max(all_cpu_times) * 1.1
+y_max_cpu = max(all_cpu_times) * 1.1 if all_cpu_times else 2
 
 # Store handles and labels for single legend
 handles3 = []
@@ -211,9 +241,8 @@ for idx, error_rate in enumerate(error_rates):
     # Filter data for current error rate
     error_data = df[df['Error'] == error_rate]
     
-    # Get unique sequence lengths and tracepoint types
+    # Get unique sequence lengths
     seq_lengths = sorted(error_data['Sequence Length'].unique())
-    tracepoint_types = ['Standard', 'Mixed', 'Variable', 'FastGA']
     
     x_positions = np.arange(len(seq_lengths))
     
@@ -234,10 +263,10 @@ for idx, error_rate in enumerate(error_rates):
             # Only collect legend info from first subplot
             if idx == 0:
                 line = ax.plot(x_positions, cpu_times, marker=markers[tp_type], 
-                             label=f'{tp_type}', color=colors[tp_type], 
+                             label=f'{tp_type.capitalize()}', color=colors[tp_type], 
                              linewidth=2, markersize=8, alpha=0.8)
                 handles3.append(line[0])
-                labels3.append(f'{tp_type}')
+                labels3.append(f'{tp_type.capitalize()}')
             else:
                 ax.plot(x_positions, cpu_times, marker=markers[tp_type], 
                        color=colors[tp_type], linewidth=2, markersize=8, alpha=0.8)
@@ -260,14 +289,14 @@ plt.subplots_adjust(right=0.85)  # Make room for legend
 plt.show()
 
 # Create analysis table
-print("\nAverage CPU Time per Alignment Analysis:")
+print("\nAverage CPU Time per Alignment Analysis (Encoding):")
 print("=" * 80)
-print(f"{'Error':<6} {'Type':<8} {'Length':<7} {'CPU Time (ms)':<12} {'Total CPU (s)':<12}")
+print(f"{'Error':<6} {'Type':<8} {'Length':<7} {'CPU Time (ms)':<15} {'Total CPU (s)':<12}")
 print("-" * 80)
 
 for error_rate in error_rates:
     error_data = df[df['Error'] == error_rate]
-    for tp_type in ['Standard', 'Mixed', 'Variable', 'FastGA']:
+    for tp_type in tracepoint_types:
         tp_data = error_data[error_data['Tracepoint Type'] == tp_type]
         if not tp_data.empty:
             for sl in sorted(tp_data['Sequence Length'].unique()):
@@ -275,14 +304,29 @@ for error_rate in error_rates:
                 if not sl_data.empty:
                     avg_cpu = sl_data['Average CPU Time (Per Aignment) (ms)'].values[0]
                     total_cpu = sl_data['CPU Time (s)'].values[0]
-                    print(f"{error_rate:<6.3f} {tp_type:<8} {sl:<7} {avg_cpu:<12.3f} {total_cpu:<12.2f}")
+                    print(f"{error_rate:<6.2f} {tp_type:<8} {sl:<7} {avg_cpu:<15.3f} {total_cpu:<12.2f}")
 
-# Create a forth plot showing total CPU time
+# Create a fourth plot showing total CPU time
 plt.figure(figsize=(16, 12))
 
-# Store handles and labels for single legend (second plot)
-handles2 = []
-labels2 = []
+# Calculate global scale for total CPU time
+all_total_cpu = []
+for error_rate in error_rates:
+    error_data = df[df['Error'] == error_rate]
+    for tp_type in tracepoint_types:
+        tp_data = error_data[error_data['Tracepoint Type'] == tp_type]
+        if not tp_data.empty:
+            for sl in sorted(error_data['Sequence Length'].unique()):
+                sl_data = tp_data[tp_data['Sequence Length'] == sl]
+                if not sl_data.empty:
+                    total_cpu = sl_data['CPU Time (s)'].values[0]
+                    all_total_cpu.append(total_cpu)
+
+y_max_total_cpu = max(all_total_cpu) * 1.1 if all_total_cpu else 15
+
+# Store handles and labels for single legend (fourth plot)
+handles4 = []
+labels4 = []
 
 for idx, error_rate in enumerate(error_rates):
     plt.subplot(2, 2, idx + 1)
@@ -290,9 +334,8 @@ for idx, error_rate in enumerate(error_rates):
     # Filter data for current error rate
     error_data = df[df['Error'] == error_rate]
     
-    # Get unique sequence lengths and tracepoint types
+    # Get unique sequence lengths
     seq_lengths = sorted(error_data['Sequence Length'].unique())
-    tracepoint_types = ['Standard', 'Mixed', 'Variable', 'FastGA']
     
     x_positions = np.arange(len(seq_lengths))
     
@@ -313,10 +356,10 @@ for idx, error_rate in enumerate(error_rates):
             # Only collect legend info from first subplot
             if idx == 0:
                 line = plt.plot(x_positions, total_cpu_times, marker=markers[tp_type], 
-                              label=f'{tp_type}', color=colors[tp_type], 
+                              label=f'{tp_type.capitalize()}', color=colors[tp_type], 
                               linewidth=2, markersize=8, alpha=0.8)
-                handles2.append(line[0])
-                labels2.append(f'{tp_type}')
+                handles4.append(line[0])
+                labels4.append(f'{tp_type.capitalize()}')
             else:
                 plt.plot(x_positions, total_cpu_times, marker=markers[tp_type], 
                         color=colors[tp_type], linewidth=2, markersize=8, alpha=0.8)
@@ -326,11 +369,12 @@ for idx, error_rate in enumerate(error_rates):
     plt.title(f'Error Rate: {error_rate}')
     plt.xticks(x_positions, [f'{sl}' for sl in seq_lengths])
     plt.grid(True, alpha=0.3)
+    plt.ylim(0, y_max_total_cpu)
 
-# Add single legend outside the subplots for second plot
-plt.figlegend(handles2, labels2, loc='center right', bbox_to_anchor=(1.0, 0.5), fontsize=10)
+# Add single legend outside the subplots for fourth plot
+plt.figlegend(handles4, labels4, loc='center right', bbox_to_anchor=(1.0, 0.5), fontsize=10)
 
 plt.tight_layout()
-plt.suptitle('Total CPU Time by Tracepoint Type', fontsize=16, fontweight='bold', y=0.98)
+plt.suptitle('Total CPU Time by Tracepoint Type (Encoding)', fontsize=16, fontweight='bold', y=0.98)
 plt.subplots_adjust(right=0.85)  # Make room for legend
 plt.show()
