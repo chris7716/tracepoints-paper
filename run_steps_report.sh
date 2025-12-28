@@ -8,13 +8,13 @@ set -euo pipefail
 #  - **Output** of each sub-command (stdout + stderr), including /usr/bin/time -v
 #
 # Usage:
-#   ./run_steps_report.sh -r <record_count> -L <length> -E <error> -N <N> -T <type>
+#   ./run_steps_report.sh -r <record_count> -L <length> -E <error> -N <N> -T <type> [-C <complexity_metric>] [-M <max_complexity>] [-t <threads>]
 
 # ---------- Defaults / paths ----------
 FASTGA_TMP="/home/hasitha/data/projects/fastga-tmp"
-CM="diagonal-distance"
-MC="100"
-THREADS="8"
+CM="diagonal-distance"  # Default complexity metric
+MC="100"               # Default max complexity
+THREADS="8"            # Default threads
 
 # Tool paths (override via env if needed)
 WFA2_BIN="${WFA2_BIN:-../WFA2-lib/bin/generate_dataset}"
@@ -26,23 +26,66 @@ TIME_BIN="$(command -v /usr/bin/time >/dev/null 2>&1 && echo /usr/bin/time || ec
 
 # ---------- Args ----------
 RECORDS="" LENGTH="" ERROR="" N_ID="" TYPE=""
+
 usage() {
-  echo "Usage: $0 -r <record_count> -L <length> -E <error> -N <N> -T <type>"
+  echo "Usage: $0 -r <record_count> -L <length> -E <error> -N <N> -T <type> [-C <complexity_metric>] [-M <max_complexity>] [-t <threads>]"
+  echo ""
+  echo "Required parameters:"
+  echo "  -r <record_count>       Number of records to generate"
+  echo "  -L <length>            Sequence length"
+  echo "  -E <error>             Error rate (e.g., 0.01)"
+  echo "  -N <N>                 Dataset ID number"
+  echo "  -T <type>              Tracepoint type (standard, mixed, variable, fastga)"
+  echo ""
+  echo "Optional parameters:"
+  echo "  -C <complexity_metric>  Complexity metric (default: diagonal-distance)"
+  echo "                         Options: edit-distance, diagonal-distance, etc."
+  echo "  -M <max_complexity>     Max complexity threshold (default: 100)"
+  echo "  -t <threads>           Number of threads (default: 8)"
+  echo ""
+  echo "Examples:"
+  echo "  $0 -r 10000 -L 1000 -E 0.01 -N 1001 -T standard"
+  echo "  $0 -r 10000 -L 1000 -E 0.01 -N 1001 -T standard -C edit-distance -M 32 -t 16"
   exit 1
 }
 
-while getopts ":r:L:E:N:T:" opt; do
+while getopts ":r:L:E:N:T:C:M:t:h" opt; do
   case "$opt" in
     r) RECORDS="$OPTARG" ;;
     L) LENGTH="$OPTARG" ;;
     E) ERROR="$OPTARG" ;;
     N) N_ID="$OPTARG" ;;
     T) TYPE="$OPTARG" ;;
-    *) usage ;;
+    C) CM="$OPTARG" ;;
+    M) MC="$OPTARG" ;;
+    t) THREADS="$OPTARG" ;;
+    h) usage ;;
+    *) echo "Invalid option: -$OPTARG" >&2; usage ;;
   esac
 done
 
 [[ -z "$RECORDS" || -z "$LENGTH" || -z "$ERROR" || -z "$N_ID" || -z "$TYPE" ]] && usage
+
+# Validate complexity metric options
+case "$CM" in
+  edit-distance|diagonal-distance)
+    ;;
+  *)
+    echo "Warning: Unknown complexity metric '$CM'. Proceeding anyway..." >&2
+    ;;
+esac
+
+# Validate max complexity is a number
+if ! [[ "$MC" =~ ^[0-9]+$ ]]; then
+  echo "Error: Max complexity must be a positive integer, got: '$MC'" >&2
+  exit 1
+fi
+
+# Validate threads is a number
+if ! [[ "$THREADS" =~ ^[0-9]+$ ]]; then
+  echo "Error: Threads must be a positive integer, got: '$THREADS'" >&2
+  exit 1
+fi
 
 # ---------- Checks & prep ----------
 for exe in "$WFA2_BIN" "$FASTGA_BIN" "$CIGZIP_BIN"; do
@@ -52,9 +95,9 @@ done
 export PATH="$PATH:$(pwd)"
 mkdir -p wf-dataset fastga-datasets cigzip-datasets tmp reports
 
-# Report filename
+# Report filename - include CM and MC for clarity
 TS="$(date +%Y%m%d-%H%M%S)"
-REPORT="reports/run_${TYPE}_N${N_ID}_${TS}.md"
+REPORT="reports/run_${TYPE}_N${N_ID}_${CM}_mc${MC}_${TS}.md"
 
 # ---------- Filenames (exactly as in your steps) ----------
 SAMPLE_SEQ="data/simulated/wf-dataset/sample.dataset.${N_ID}.seq"
@@ -65,8 +108,6 @@ TMP_TYPED="data/simulated/tmp/tmp.${TYPE}.${N_ID}.paf"
 CIGZIP_OUT_TYPED="data/simulated/cigzip-datasets/dataset.${TYPE}.${N_ID}.paf"
 
 name="dataset.${TYPE}.${N_ID}"
-cm="${CM}"
-mc="${MC}"
 
 # ---------- Helpers ----------
 section()     { echo -e "\n## $1\n" >> "$REPORT"; }
@@ -113,9 +154,9 @@ kv "length (-L)" "$LENGTH"
 kv "error (-E)" "$ERROR"
 kv "N (-N)" "$N_ID"
 kv "type (-T)" "$TYPE"
-kv "complexity metric (cm)" "$cm"
-kv "max complexity (mc)" "$mc"
-kv "threads" "$THREADS"
+kv "complexity metric (-C)" "$CM"
+kv "max complexity (-M)" "$MC"
+kv "threads (-t)" "$THREADS"
 
 section "Tool Binaries"
 {
@@ -186,24 +227,12 @@ run_and_capture "5) cigzip decode (type=${TYPE}) → ${CIGZIP_OUT_TYPED}" \
   "$CIGZIP_BIN decode -p ${TMP_TYPED} --type standard --complexity-metric edit-distance --sequence-files ${FASTA} > ${CIGZIP_OUT_TYPED}"
 
 # ---------- 6) cigzip encode with max-complexity (tracepoints) ----------
-run_and_capture "6) cigzip encode (max-complexity=${mc}, threads=${THREADS}) --minimal → cigzip-datasets/${name}.tp.mc${mc}.paf" \
-  "${TIME_BIN} ${CIGZIP_BIN} encode -p data/simulated/cigzip-datasets/${name}.paf --type ${TYPE} --complexity-metric ${cm} --max-complexity ${mc} -t ${THREADS} --minimal > data/simulated/cigzip-datasets/${name}.tp.mc${mc}.paf"
-
-# ---------- 7) cigzip decode + diff verification ----------
-#subsection "7) cigzip decode + diff verification"
-#echo "**Command**:" >> "$REPORT"
-#code_bash "${TIME_BIN} -v ${CIGZIP_BIN} decode -p data/simulated/cigzip-datasets/${name}.tp.mc${mc}.paf --type ${TYPE} --complexity-metric ${cm} --sequence-files ${FASTA} --max-complexity ${mc} -t ${THREADS} > data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf && diff <(sort data/simulated/cigzip-datasets/${name}.paf) <(sort data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf) | wc -l"
-#echo "**Output**:" >> "$REPORT"
-#{
-#  code_text
-#  ${TIME_BIN} -v "${CIGZIP_BIN}" decode -p "data/simulated/cigzip-datasets/${name}.tp.mc${mc}.paf" --type "${TYPE}" --complexity-metric "${cm}" --sequence-files "${FASTA}" --max-complexity "${mc}" -t "${THREADS}" > "data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf"
-#  diff <(sort "data/simulated/cigzip-datasets/${name}.paf") <(sort "data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf") | wc -l
-#  code_end
-#} >> "$REPORT"
+run_and_capture "6) cigzip encode (max-complexity=${MC}, threads=${THREADS}) --minimal → cigzip-datasets/${name}.tp.mc${MC}.paf" \
+  "${TIME_BIN} ${CIGZIP_BIN} encode -p data/simulated/cigzip-datasets/${name}.paf --type ${TYPE} --complexity-metric ${CM} --max-complexity ${MC} -t ${THREADS} --minimal > data/simulated/cigzip-datasets/${name}.tp.mc${MC}.paf"
 
 # ---------- 7) cigzip decode + diff verification ----------
 run_and_capture "7) cigzip decode + diff verification" \
-  "${TIME_BIN} -v ${CIGZIP_BIN} decode -p data/simulated/cigzip-datasets/${name}.tp.mc${mc}.paf --type ${TYPE} --complexity-metric ${cm} --sequence-files ${FASTA} --max-complexity ${mc} -t ${THREADS} > data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf && diff <(sort data/simulated/cigzip-datasets/${name}.paf) <(sort data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf) | wc -l"
+  "${TIME_BIN} -v ${CIGZIP_BIN} decode -p data/simulated/cigzip-datasets/${name}.tp.mc${MC}.paf --type ${TYPE} --complexity-metric ${CM} --sequence-files ${FASTA} --max-complexity ${MC} -t ${THREADS} > data/simulated/cigzip-datasets/${name}.tp.mc${MC}.decompressed.paf && diff <(sort data/simulated/cigzip-datasets/${name}.paf) <(sort data/simulated/cigzip-datasets/${name}.tp.mc${MC}.decompressed.paf) | wc -l"
 
 # ---------- Artifacts summary ----------
 section "Artifacts"
@@ -216,18 +245,16 @@ section "Artifacts"
   echo "| ${FASTGA_PAF} | $(filesize "${FASTGA_PAF}") |"
   echo "| ${TMP_TYPED} | $(filesize "${TMP_TYPED}") |"
   echo "| ${CIGZIP_OUT_TYPED} | $(filesize "${CIGZIP_OUT_TYPED}") |"
-  echo "| cigzip-datasets/${name}.tp.mc${mc}.paf | $(filesize "data/simulated/cigzip-datasets/${name}.tp.mc${mc}.paf") |"
-  echo "| cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf | $(filesize "data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf") |"
+  echo "| cigzip-datasets/${name}.tp.mc${MC}.paf | $(filesize "data/simulated/cigzip-datasets/${name}.tp.mc${MC}.paf") |"
+  echo "| cigzip-datasets/${name}.tp.mc${MC}.decompressed.paf | $(filesize "data/simulated/cigzip-datasets/${name}.tp.mc${MC}.decompressed.paf") |"
 } >> "$REPORT"
-
-echo "Report written: ${REPORT}"
 
 section "Artifacts MB"
 {
   echo
-  echo "| ${SAMPLE_SEQ} | ${FASTA} | ${FASTGA_PAF} | ${TMP_TYPED} | ${CIGZIP_OUT_TYPED} | cigzip-datasets/${name}.tp.mc${mc}.paf | cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf |"
+  echo "| ${SAMPLE_SEQ} | ${FASTA} | ${FASTGA_PAF} | ${TMP_TYPED} | ${CIGZIP_OUT_TYPED} | cigzip-datasets/${name}.tp.mc${MC}.paf | cigzip-datasets/${name}.tp.mc${MC}.decompressed.paf |"
   echo "|---|---|---|---|---|---|---|"
-  echo "| $(filesize_mb "${SAMPLE_SEQ}") | $(filesize_mb "${FASTA}") | $(filesize_mb "${FASTGA_PAF}") | $(filesize_mb "${TMP_TYPED}") | $(filesize_mb "${CIGZIP_OUT_TYPED}") | $(filesize_mb "data/simulated/cigzip-datasets/${name}.tp.mc${mc}.paf") | $(filesize_mb "data/simulated/cigzip-datasets/${name}.tp.mc${mc}.decompressed.paf") |"
+  echo "| $(filesize_mb "${SAMPLE_SEQ}") | $(filesize_mb "${FASTA}") | $(filesize_mb "${FASTGA_PAF}") | $(filesize_mb "${TMP_TYPED}") | $(filesize_mb "${CIGZIP_OUT_TYPED}") | $(filesize_mb "data/simulated/cigzip-datasets/${name}.tp.mc${MC}.paf") | $(filesize_mb "data/simulated/cigzip-datasets/${name}.tp.mc${MC}.decompressed.paf") |"
 } >> "$REPORT"
 
 echo "Report written: ${REPORT}"
