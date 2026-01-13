@@ -17,7 +17,7 @@ MC="100"               # Default max complexity
 THREADS="8"            # Default threads
 
 # Tool paths (override via env if needed)
-WFA2_BIN="${WFA2_BIN:-../WFA2-lib/bin/generate_dataset}"
+WFA2_BIN="${WFA2_BIN:-../WFA2-lib/bin/generate_dataset1}"
 FASTGA_BIN="${FASTGA_BIN:-../FASTGA/FastGA}"
 CIGZIP_BIN="${CIGZIP_BIN:-../cigzip/target/debug/cigzip}"
 
@@ -180,7 +180,7 @@ section "Pipeline"
 
 # ---------- 1) Generate dataset ----------
 run_and_capture "1) WFA2 generate_dataset" \
-  "$WFA2_BIN -n ${RECORDS} -l ${LENGTH} -e ${ERROR} -o ${SAMPLE_SEQ}"
+  "$WFA2_BIN -n ${RECORDS} -l ${LENGTH} -e ${ERROR} -o ${SAMPLE_SEQ} --balanced-indels 120,40"
 
 # ---------- 2) Convert to FASTA (exact awk) ----------
 subsection "2) Convert to FASTA (awk)"
