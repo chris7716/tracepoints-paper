@@ -1,3 +1,3 @@
 Dataset,Record Count,Sequence Length,Error,Tracepoint Type,sample.seq,dataset.fa,fastga.paf,tmp.paf,cigzip.paf,tp.paf,decompressed.paf
-N21005_R10000_L10000_E0.1,10000,10000,0.1,standard,,,,,,,
-N21006_R10000_L10000_E0.1,10000,10000,0.1,standard,,,,,,,
+N21007_R10000_L10000_E0.1,10000,10000,0.1,standard,data/simulated/wf-dataset/sample.dataset.21007.seq,data/simulated/wf-dataset/dataset.21007.fa,data/simulated/fastga-datasets/dataset.21007.paf,data/simulated/tmp/tmp.standard.21007.paf,data/simulated/cigzip-datasets/dataset.standard.21007.paf,cigzip-datasets/dataset.standard.21007.tp.mc32.paf,cigzip-datasets/dataset.standard.21007.tp.mc32.decompressed.paf
+N21008_R10000_L10000_E0.1,10000,10000,0.1,standard,data/simulated/wf-dataset/sample.dataset.21008.seq,data/simulated/wf-dataset/dataset.21008.fa,data/simulated/fastga-datasets/dataset.21008.paf,data/simulated/tmp/tmp.standard.21008.paf,data/simulated/cigzip-datasets/dataset.standard.21008.paf,cigzip-datasets/dataset.standard.21008.tp.mc32.paf,cigzip-datasets/dataset.standard.21008.tp.mc32.decompressed.paf
