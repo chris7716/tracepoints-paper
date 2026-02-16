@@ -452,66 +452,102 @@ cat("\n")
 cat("TRACEPOINT COUNTS AND SEGMENT SIZES (for text)\n")
 cat("-" %>% rep(70) %>% paste0(collapse = ""), "\n\n")
 
-# Tracepoint counts from benchmark files
-cat("Human tracepoint counts (from benchmark, mc=32):\n")
+# Tracepoint counts from benchmark files — all EB-TP δ values and DB-TP
+# Use total alignment length from aln-stats TOTAL row for approximate segment sizes
+human_aln_stats_tp <- read_tsv(file.path(real_data_dir, "hprcv2-25k.aln-stats.tsv"), show_col_types = FALSE)
+primate_aln_stats_tp <- read_tsv(file.path(real_data_dir, "t2t-ape-pangenome.aln-stats.tsv"), show_col_types = FALSE)
+human_total_aln_length_bp <- (human_aln_stats_tp %>% filter(file == "TOTAL"))$total_length_GB * 1e9
+primate_total_aln_length_bp <- (primate_aln_stats_tp %>% filter(file == "TOTAL"))$total_length_GB * 1e9
+
+cat("Human tracepoint counts (all methods/thresholds):\n")
 human_tp_counts <- human_data %>%
-  filter(mc == 32) %>%
-  mutate(method = ifelse(cm == "diagonal-distance", "DB-TP", "EB-TP")) %>%
-  group_by(method) %>%
-  summarise(total_tracepoints = sum(num_tracepoints), .groups = "drop")
+  mutate(
+    method_label = case_when(
+      cm == "diagonal-distance" ~ paste0("DB-TP (b=", mc, ")"),
+      cm == "edit-distance" ~ paste0("EB-TP (\u03b4=", mc, ")")
+    )
+  ) %>%
+  group_by(cm, mc, method_label) %>%
+  summarise(total_tracepoints = sum(num_tracepoints), .groups = "drop") %>%
+  mutate(approx_avg_seg_bp = human_total_aln_length_bp / total_tracepoints)
 print(human_tp_counts)
 
-# Segment sizes from tp-stats files (weighted average)
+# Segment sizes from tp-stats files (weighted average) — only available for mc=32
 human_dbtp_stats <- read_tsv(file.path(real_data_dir, "hprcv2-25k.diagonal-distance-32.tp-stats.tsv"), show_col_types = FALSE)
 human_ebtp_stats <- read_tsv(file.path(real_data_dir, "hprcv2-25k.edit-distance-32.tp-stats.tsv"), show_col_types = FALSE)
 
 human_dbtp_avg_seg <- sum(human_dbtp_stats$num_pairs * human_dbtp_stats$val1_avg) / sum(human_dbtp_stats$num_pairs)
 human_ebtp_avg_seg <- sum(human_ebtp_stats$num_pairs * human_ebtp_stats$val1_avg) / sum(human_ebtp_stats$num_pairs)
 
-cat(sprintf("\nHuman segment sizes (weighted avg from tp-stats):\n"))
+cat(sprintf("\nHuman segment sizes (weighted avg from tp-stats, mc=32 only):\n"))
 cat(sprintf("  DB-TP: %.1f Kb\n", human_dbtp_avg_seg / 1000))
 cat(sprintf("  EB-TP: %.1f Kb\n", human_ebtp_avg_seg / 1000))
 
-cat(sprintf("\nHuman summary:\n"))
-cat(sprintf("  DB-TP: %.1f billion tracepoints, avg segment %.1f Kb\n",
-            human_tp_counts %>% filter(method == "DB-TP") %>% pull(total_tracepoints) / 1e9,
-            human_dbtp_avg_seg / 1000))
-cat(sprintf("  EB-TP: %.1f billion tracepoints, avg segment %.1f Kb\n",
-            human_tp_counts %>% filter(method == "EB-TP") %>% pull(total_tracepoints) / 1e9,
-            human_ebtp_avg_seg / 1000))
-cat(sprintf("  Ratio: %.1f× fewer tracepoints for DB-TP\n",
-            (human_tp_counts %>% filter(method == "EB-TP") %>% pull(total_tracepoints)) /
-            (human_tp_counts %>% filter(method == "DB-TP") %>% pull(total_tracepoints))))
+cat(sprintf("\nHuman summary (all EB-TP thresholds):\n"))
+for (i in seq_len(nrow(human_tp_counts))) {
+  row <- human_tp_counts[i, ]
+  if (row$approx_avg_seg_bp >= 1000) {
+    cat(sprintf("  %s: %.1f billion tracepoints, approx avg segment %.1f Kb\n",
+                row$method_label, row$total_tracepoints / 1e9, row$approx_avg_seg_bp / 1000))
+  } else {
+    cat(sprintf("  %s: %.0f million tracepoints, approx avg segment %.0f bp\n",
+                row$method_label, row$total_tracepoints / 1e6, row$approx_avg_seg_bp))
+  }
+}
 
-cat("\nPrimate tracepoint counts (from benchmark, mc=32):\n")
+# DB-TP vs each EB-TP threshold
+human_dbtp_tp <- human_tp_counts %>% filter(cm == "diagonal-distance") %>% pull(total_tracepoints)
+human_ebtp_tp <- human_tp_counts %>% filter(cm == "edit-distance")
+cat("\nHuman tracepoint ratios (EB-TP / DB-TP):\n")
+for (i in seq_len(nrow(human_ebtp_tp))) {
+  row <- human_ebtp_tp[i, ]
+  cat(sprintf("  %s / DB-TP: %.1f\u00d7\n", row$method_label, row$total_tracepoints / human_dbtp_tp))
+}
+
+cat("\nPrimate tracepoint counts (all methods/thresholds):\n")
 primate_tp_counts <- primate_data %>%
-  filter(mc == 32) %>%
-  mutate(method = ifelse(cm == "diagonal-distance", "DB-TP", "EB-TP")) %>%
-  group_by(method) %>%
-  summarise(total_tracepoints = sum(num_tracepoints), .groups = "drop")
+  mutate(
+    method_label = case_when(
+      cm == "diagonal-distance" ~ paste0("DB-TP (b=", mc, ")"),
+      cm == "edit-distance" ~ paste0("EB-TP (\u03b4=", mc, ")")
+    )
+  ) %>%
+  group_by(cm, mc, method_label) %>%
+  summarise(total_tracepoints = sum(num_tracepoints), .groups = "drop") %>%
+  mutate(approx_avg_seg_bp = primate_total_aln_length_bp / total_tracepoints)
 print(primate_tp_counts)
 
-# Segment sizes from tp-stats files
+# Segment sizes from tp-stats files — only available for mc=32
 primate_dbtp_stats <- read_tsv(file.path(real_data_dir, "t2t-ape-pangenome.diagonal-distance-32.tp-stats.tsv"), show_col_types = FALSE)
 primate_ebtp_stats <- read_tsv(file.path(real_data_dir, "t2t-ape-pangenome.edit-distance-32.tp-stats.tsv"), show_col_types = FALSE)
 
 primate_dbtp_avg_seg <- sum(primate_dbtp_stats$num_pairs * primate_dbtp_stats$val1_avg) / sum(primate_dbtp_stats$num_pairs)
 primate_ebtp_avg_seg <- sum(primate_ebtp_stats$num_pairs * primate_ebtp_stats$val1_avg) / sum(primate_ebtp_stats$num_pairs)
 
-cat(sprintf("\nPrimate segment sizes (weighted avg from tp-stats):\n"))
+cat(sprintf("\nPrimate segment sizes (weighted avg from tp-stats, mc=32 only):\n"))
 cat(sprintf("  DB-TP: %.1f Kb\n", primate_dbtp_avg_seg / 1000))
 cat(sprintf("  EB-TP: %.0f bp\n", primate_ebtp_avg_seg))
 
-cat(sprintf("\nPrimate summary:\n"))
-cat(sprintf("  DB-TP: %.0f million tracepoints, avg segment %.1f Kb\n",
-            primate_tp_counts %>% filter(method == "DB-TP") %>% pull(total_tracepoints) / 1e6,
-            primate_dbtp_avg_seg / 1000))
-cat(sprintf("  EB-TP: %.0f million tracepoints, avg segment %.0f bp\n",
-            primate_tp_counts %>% filter(method == "EB-TP") %>% pull(total_tracepoints) / 1e6,
-            primate_ebtp_avg_seg))
-cat(sprintf("  Ratio: %.1f× fewer tracepoints for DB-TP\n",
-            (primate_tp_counts %>% filter(method == "EB-TP") %>% pull(total_tracepoints)) /
-            (primate_tp_counts %>% filter(method == "DB-TP") %>% pull(total_tracepoints))))
+cat(sprintf("\nPrimate summary (all EB-TP thresholds):\n"))
+for (i in seq_len(nrow(primate_tp_counts))) {
+  row <- primate_tp_counts[i, ]
+  if (row$approx_avg_seg_bp >= 1000) {
+    cat(sprintf("  %s: %.0f million tracepoints, approx avg segment %.1f Kb\n",
+                row$method_label, row$total_tracepoints / 1e6, row$approx_avg_seg_bp / 1000))
+  } else {
+    cat(sprintf("  %s: %.0f million tracepoints, approx avg segment %.0f bp\n",
+                row$method_label, row$total_tracepoints / 1e6, row$approx_avg_seg_bp))
+  }
+}
+
+# DB-TP vs each EB-TP threshold
+primate_dbtp_tp <- primate_tp_counts %>% filter(cm == "diagonal-distance") %>% pull(total_tracepoints)
+primate_ebtp_tp <- primate_tp_counts %>% filter(cm == "edit-distance")
+cat("\nPrimate tracepoint ratios (EB-TP / DB-TP):\n")
+for (i in seq_len(nrow(primate_ebtp_tp))) {
+  row <- primate_ebtp_tp[i, ]
+  cat(sprintf("  %s / DB-TP: %.1f\u00d7\n", row$method_label, row$total_tracepoints / primate_dbtp_tp))
+}
 
 cat("\n")
 
@@ -791,16 +827,68 @@ for (i in seq_len(nrow(primate_perfile))) {
 }
 cat("Manuscript claims (mc=32): DB-TP 1068 sec/file, EB-TP 48 sec/file\n")
 
-# Speed and memory differences (mc=32)
-primate_dbtp <- primate_perfile %>% filter(method == "DB-TP", mc == 32)
-primate_ebtp <- primate_perfile %>% filter(method == "EB-TP", mc == 32)
+# Speed and memory differences (all EB-TP thresholds vs DB-TP)
+cat("\nSpeed and memory differences (DB-TP b=32 vs EB-TP, all thresholds):\n")
+primate_dbtp_perfile <- primate_perfile %>% filter(method == "DB-TP", mc == 32)
+primate_dbtp_mem <- primate_stats %>% filter(method == "DB-TP", mc == 32) %>% pull(peak_decode_memory_gib)
 
-speed_diff <- primate_dbtp$avg_runtime_per_file / primate_ebtp$avg_runtime_per_file
-memory_diff <- (primate_stats %>% filter(method == "DB-TP", mc == 32) %>% pull(peak_decode_memory_gib)) /
-               (primate_stats %>% filter(method == "EB-TP", mc == 32) %>% pull(peak_decode_memory_gib))
+for (mc_val in c(32, 64, 128)) {
+  ebtp_pf <- primate_perfile %>% filter(method == "EB-TP", mc == mc_val)
+  ebtp_mem <- primate_stats %>% filter(method == "EB-TP", mc == mc_val) %>% pull(peak_decode_memory_gib)
+  if (nrow(ebtp_pf) > 0) {
+    speed_diff <- primate_dbtp_perfile$avg_runtime_per_file / ebtp_pf$avg_runtime_per_file
+    memory_diff <- primate_dbtp_mem / ebtp_mem
+    cat(sprintf("  Primate DB-TP / EB-TP (\u03b4=%d): speed %.1f\u00d7, memory %.1f\u00d7\n",
+                mc_val, speed_diff, memory_diff))
+  }
+}
 
-cat(sprintf("\nPrimate speed difference (DB-TP / EB-TP): %.1f× (manuscript: 22×)\n", speed_diff))
-cat(sprintf("Primate memory difference (DB-TP / EB-TP): %.1f× (manuscript: 13×)\n", memory_diff))
+cat("\n")
+
+# -----------------------------------------------------------------------------
+# REAL DATA: Decompression fractions (for text, line 84)
+# -----------------------------------------------------------------------------
+
+cat("REAL DATA: Decompression fractions (for text, line 84)\n")
+cat("-" %>% rep(70) %>% paste0(collapse = ""), "\n\n")
+
+# Helper function: compute decompression fraction per method/threshold
+compute_decomp_fractions <- function(data, dataset_name) {
+  data %>%
+    mutate(
+      method_label = case_when(
+        cm == "diagonal-distance" ~ paste0("DB-TP (b=", mc, ")"),
+        cm == "edit-distance" ~ paste0("EB-TP (\u03b4=", mc, ")")
+      ),
+      total_runtime = decompress_runtime_sec + decode_runtime_sec,
+      decomp_frac = ifelse(total_runtime > 0, decompress_runtime_sec / total_runtime * 100, 0)
+    ) %>%
+    group_by(cm, mc, method_label) %>%
+    summarise(
+      min_decomp_pct = min(decomp_frac),
+      max_decomp_pct = max(decomp_frac),
+      mean_decomp_pct = mean(decomp_frac),
+      .groups = "drop"
+    ) %>%
+    mutate(dataset = dataset_name)
+}
+
+human_decomp_fracs <- compute_decomp_fractions(human_data, "Human")
+primate_decomp_fracs <- compute_decomp_fractions(primate_data, "Primate")
+
+cat("Human decompression fractions:\n")
+for (i in seq_len(nrow(human_decomp_fracs))) {
+  row <- human_decomp_fracs[i, ]
+  cat(sprintf("  %s: %.1f--%.1f%% (mean %.1f%%)\n",
+              row$method_label, row$min_decomp_pct, row$max_decomp_pct, row$mean_decomp_pct))
+}
+
+cat("\nPrimate decompression fractions:\n")
+for (i in seq_len(nrow(primate_decomp_fracs))) {
+  row <- primate_decomp_fracs[i, ]
+  cat(sprintf("  %s: %.1f--%.1f%% (mean %.1f%%)\n",
+              row$method_label, row$min_decomp_pct, row$max_decomp_pct, row$mean_decomp_pct))
+}
 
 cat("\n")
 
@@ -1044,7 +1132,7 @@ for (i in seq_len(nrow(real_data_factors))) {
   cat(sprintf("  %s %s: %.1f\u00d7\n", row$dataset, row$method_label, row$compression_factor_vs_paf))
 }
 
-cat(sprintf("\n  Combined range: %.1f--%.1f\u00d7 (abstract: 23--139\u00d7)\n",
+cat(sprintf("\n  Combined range: %.1f--%.1f\u00d7 (abstract: 23--143\u00d7)\n",
             min(real_data_factors$compression_factor_vs_paf),
             max(real_data_factors$compression_factor_vs_paf)))
 
@@ -1084,7 +1172,7 @@ cat(sprintf("  Combined range: %.0f--%.0f×\n",
 
 # Claim: speedup vs re-alignment at 100 Kb
 speedup_all <- c(speedup_table$`FL-TP`, speedup_table$`EB-TP`, speedup_table$`DB-TP`)
-cat(sprintf("\nVerify: speedup vs re-alignment at 100 Kb (manuscript: 6--46×):\n"))
+cat(sprintf("\nVerify: speedup vs re-alignment at 100 Kb (manuscript: up to 117×):\n"))
 cat(sprintf("  Range (all methods, all error rates): %.1f--%.1f×\n",
             min(speedup_all), max(speedup_all)))
 cat(sprintf("  Range (5--20%% error only): %.1f--%.1f×\n",
@@ -1112,7 +1200,7 @@ cat("CROSS-REFERENCE: LINE 35 DECOMPRESSION FRACTION\n")
 cat("-" %>% rep(70) %>% paste0(collapse = ""), "\n\n")
 
 cat(sprintf("Worst case: %.1f%% (manuscript: less than 20%%)\n", max(df_decomp_frac$decomp_pct)))
-cat(sprintf("Conditions < 3%%: %d/%d = %.0f%% (manuscript: 'most conditions under 3%%')\n",
+cat(sprintf("Conditions < 3%%: %d/%d = %.0f%% (manuscript: 'at most 3%%')\n",
             sum(df_decomp_frac$decomp_pct < 3), nrow(df_decomp_frac),
             sum(df_decomp_frac$decomp_pct < 3) / nrow(df_decomp_frac) * 100))
 
