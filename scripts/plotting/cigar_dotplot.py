@@ -444,8 +444,8 @@ def _render_dotplot_on_ax(
 
     # -- Dots at tracepoint boundary positions (on the alignment path) --
     dot_size = max(6, min(16, int(6000 / aln_span))) * font_scale
-    dot_t = [alignment.target_start] + [b.target_pos for b in boundaries]
-    dot_q = [alignment.query_start] + [b.query_pos for b in boundaries]
+    dot_t = [b.target_pos for b in boundaries]
+    dot_q = [b.query_pos for b in boundaries]
     ax.plot(dot_t, dot_q, 'o', color='black', markersize=dot_size, alpha=0.6, zorder=5)
 
     # -- Cell labels (near boundary point, offset into open quadrant) --
