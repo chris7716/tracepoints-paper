@@ -41,6 +41,8 @@ df <- pivot_metric(raw, "disk_bits_per_e", "disk_bits_per_e") %>%
   mutate(
     gz_bits_per_e = gz_B_per_e * 8,
     method = factor(method, levels = methods, labels = labels),
+    eps_label = paste0(eps * 100, "%"),
+    eps_label = fct_reorder(eps_label, eps),
     n_label = paste0("n = ", scales::comma(n)),
     n_label = fct_reorder(n_label, n)
   )
@@ -75,7 +77,7 @@ save_plot <- function(p, name, w = 10, h = 6) {
 
 # Shared bar-plot skeleton. Uses linear y-axis with free_y per facet.
 bar_plot <- function(df, y_col, y_lab, y_labels = waiver()) {
-  ggplot(df, aes(x = factor(eps), y = .data[[y_col]], fill = method)) +
+  ggplot(df, aes(x = eps_label, y = .data[[y_col]], fill = method)) +
     geom_col(position = position_dodge(0.85), width = 0.8) +
     facet_wrap(~ n_label, nrow = 2, scales = "free_y") +
     scale_fill_manual(values = method_colors) +
@@ -90,7 +92,7 @@ bar_plot <- function(df, y_col, y_lab, y_labels = waiver()) {
 # 8 bars per error rate: 4 methods × 2 storage types (disk=solid, gzip=faded).
 combo_plot <- function(df, disk_col, gz_col, y_lab) {
   long <- df %>%
-    select(n_label, eps, method, disk = !!sym(disk_col), gzip = !!sym(gz_col)) %>%
+    select(n_label, eps, eps_label, method, disk = !!sym(disk_col), gzip = !!sym(gz_col)) %>%
     pivot_longer(c(disk, gzip), names_to = "storage", values_to = "value") %>%
     mutate(storage = factor(storage, levels = c("disk", "gzip")))
 
@@ -102,7 +104,7 @@ combo_plot <- function(df, disk_col, gz_col, y_lab) {
   fill_vals  <- setNames(rep(method_colors[method_lvls], each = 2), combo_lvls)
   alpha_vals <- setNames(rep(c(1.0, 0.4), length(method_lvls)), combo_lvls)
 
-  ggplot(long, aes(x = factor(eps), y = value, fill = combo, alpha = combo)) +
+  ggplot(long, aes(x = eps_label, y = value, fill = combo, alpha = combo)) +
     geom_col(position = position_dodge(0.9), width = 0.85) +
     facet_wrap(~ n_label, nrow = 2, scales = "free_y") +
     scale_fill_manual(values = fill_vals,
