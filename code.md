@@ -1005,3 +1005,46 @@ Compute compression statistics reported in figure captions and text:
 # Deps:   tidyverse
 Rscript scripts/compute_compression_stats.R
 ```
+
+## ES-2bit comparison on simulated pangenomes
+
+Compare ES-2bit (drop all `=` ops, store each `I`/`X`/`D` in 2 bits) against FL-TP (l=100), EB-TP (δ=32), and DB-TP (b=32).
+
+```shell
+zenodo=/home/guarracino/Desktop/Guarracino/tracepoints/zenodo/simulated-pangenomes
+tracepoints_dir=/home/guarracino/git/tracepoints
+out_dir=/home/guarracino/Desktop/Guarracino/tracepoints/es2bit-bench
+mkdir -p "$out_dir"
+
+cargo build --release --manifest-path "$tracepoints_dir/Cargo.toml" --example es2bit_bench
+bench=$tracepoints_dir/target/release/examples/es2bit_bench
+
+for l in 100 1000 10000 100000; do
+  for e in 001 005 010 020; do
+    prefix="set_${l}_${e}"
+    tpa="$zenodo/tpas/${prefix}.standard.edit-distance.128.high.tpa"
+    fa_gz="$zenodo/seqs/${prefix}.fa.gz"
+    paf="$out_dir/${prefix}.paf"
+    fa="$out_dir/${prefix}.fa"
+
+    # TPA → PAF with cg:Z: tags
+    cigzip decompress --input "$tpa" --decode --sequence-files "$fa_gz" > "$paf"
+    zcat "$fa_gz" > "$fa"
+
+    # Encode/decode/verify all four methods; 1000 records per  PAF
+    "$bench" "$paf" "$fa" 1000 > "$out_dir/${prefix}.summary.tsv"
+  done
+done
+
+# Aggregate summaries.
+head -n 1 "$out_dir/set_100_001.summary.tsv" > "$out_dir/all.tsv"
+for f in "$out_dir"/set_*.summary.tsv; do tail -n +2 "$f" >> "$out_dir/all.tsv"; done
+
+# Plot and compute stats for the paper text.
+Rscript scripts/plotting/plot-es2bit-bench.R "$out_dir/all.tsv" "$out_dir/plots"
+Rscript scripts/compute_es2bit_stats.R "$out_dir/all.tsv"
+
+# Copy figures into the paper (S5 = decode time, S6 = storage bits).
+cp "$out_dir/plots/es2bit_decode_ns_per_edit.pdf" paper/figures/figS5_es2bit_decode_ns_per_edit.pdf
+cp "$out_dir/plots/es2bit_bits_per_edit.pdf" paper/figures/figS6_es2bit_bits_per_edit.pdf
+```
