@@ -56,10 +56,10 @@ df_delta <- data %>%
   )
 
 p_delta <- ggplot(df_delta, aes(x = error_label, y = ratio_tpa, fill = delta_label)) +
-  geom_bar(stat = "identity", position = position_dodge(width = 0.85), width = 0.8) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.9), width = 0.78) +
   facet_grid2(method ~ length_label, scales = "free_y", independent = "y") +
-  scale_fill_manual(values = c("t=32" = "#4292c6", "t=64" = "#2171b5", "t=128" = "#08519c",
-                               "t=256" = "#08306b", "t=512" = "#6a51a3", "t=1024" = "#4a1486"),
+  scale_fill_manual(values = c("t=32" = "#9ecae1", "t=64" = "#4292c6", "t=128" = "#08519c",
+                               "t=256" = "#253494", "t=512" = "#6a017a", "t=1024" = "#2d004b"),
                     name = "Threshold") +
   scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
   labs(
