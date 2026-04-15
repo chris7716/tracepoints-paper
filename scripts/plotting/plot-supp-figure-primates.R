@@ -175,6 +175,18 @@ ggsave(file.path(fig_dir, "figS4_primate_performance.png"),
 ggsave(file.path(fig_dir, "figS4_primate_performance.pdf"),
        p_combined, width = 12, height = 8, bg = "white", device = cairo_pdf)
 
+# Variant for reviewer: all four panels on log10 scale
+p_tpa_size_log <- p_tpa_size + scale_y_log10(expand = expansion(mult = c(0, 0.15)))
+p_tracepoints_log <- p_tracepoints + scale_y_log10(expand = expansion(mult = c(0, 0.15)))
+p_combined_alllog <- (p_tpa_size_log + p_tracepoints_log) / (p_decode_time + p_peak_memory) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+p_combined_alllog <- p_combined_alllog +
+  plot_annotation(tag_levels = "A") &
+  theme(plot.tag = element_text(size = 16, face = "bold"))
+ggsave(file.path(fig_dir, "figS4_primate_performance_alllog.png"),
+       p_combined_alllog, width = 12, height = 8, dpi = 300, bg = "white")
+
 message("Figure saved: figS4_primate_performance.png/pdf")
 
 # Print summary statistics
