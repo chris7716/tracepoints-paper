@@ -164,6 +164,23 @@ df_scores <- bind_rows(df_hprc_plot, df_t2t_plot) %>%
     species = factor(species, levels = species_levels)
   )
 
+# Log-spaced bins shared across both datasets (kills integer-score spikes and
+# makes bar heights reflect the total alignment count)
+log_bin_edges <- 10 ^ seq(
+  log10(max(1, min(df_scores$neg_score))),
+  log10(max(df_scores$neg_score)),
+  length.out = 81  # 80 bins
+)
+df_scores_binned <- df_scores %>%
+  mutate(bin_idx = findInterval(neg_score, log_bin_edges, all.inside = TRUE)) %>%
+  group_by(dataset, bin_idx) %>%
+  summarise(frequency = sum(frequency), .groups = "drop") %>%
+  mutate(
+    bin_low  = log_bin_edges[bin_idx],
+    bin_high = log_bin_edges[bin_idx + 1],
+    bin_center = 10 ^ ((log10(bin_low) + log10(bin_high)) / 2)
+  )
+
 species_colors <- c(
   "Human"        = "#E41A1C",
   "Chimpanzee"   = "#377EB8",
@@ -181,8 +198,9 @@ compact_label <- function(x) {
   as.character(x)))
 }
 
-p_scores <- ggplot(df_scores, aes(x = neg_score, y = frequency)) +
-  geom_col(width = 0.10) +
+p_scores <- ggplot(df_scores_binned,
+                   aes(xmin = bin_low, xmax = bin_high, ymin = 0, ymax = frequency)) +
+  geom_rect() +
   facet_wrap(~ dataset, nrow = 2, scales = "free_y") +
   scale_x_log10(breaks = 10^(1:7), labels = scales::comma) +
   scale_y_continuous(labels = compact_label, expand = expansion(mult = c(0, 0.05))) +
