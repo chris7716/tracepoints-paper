@@ -124,11 +124,45 @@ p_3r_row1 <- ggplot(plot_long_3r_row1, aes(x = error_label, y = ratio, fill = fo
   common_theme +
   theme(legend.position = "none", axis.text.x = element_blank(), axis.ticks.x = element_blank())
 
-p_3r_row2 <- ggplot(plot_long_3r_row2, aes(x = error_label, y = ratio, fill = format_label)) +
+# Broken y-axis for row 2 (10 Kb, 100 Kb): expand the 0-0.05 range visually
+# so small tracepoint ratios are legible, while BGZIP/FL-TP bars (up to ~0.3)
+# remain visible above the break.
+low_max <- 0.05
+high_max <- 0.30
+low_visual_end <- 0.18
+gap_visual <- 0.01
+high_visual_start <- low_visual_end + gap_visual
+high_visual_end <- 0.30
+low_scale <- low_visual_end / low_max
+high_scale <- (high_visual_end - high_visual_start) / (high_max - low_max)
+transform_y <- function(y) {
+  ifelse(y <= low_max, y * low_scale,
+         high_visual_start + (y - low_max) * high_scale)
+}
+
+plot_long_3r_row2 <- plot_long_3r_row2 %>%
+  mutate(ratio_plot = transform_y(pmin(ratio, high_max)))
+
+break_data <- data.frame(length_label = factor(c("10 Kb", "100 Kb"),
+  levels = c("100 bp", "1 Kb", "10 Kb", "100 Kb")))
+
+low_ticks <- seq(0, low_max, by = 0.01)
+high_ticks <- c(0.1, 0.2, 0.3)
+breaks_r2 <- c(transform_y(low_ticks), transform_y(high_ticks))
+labels_r2 <- c(sprintf("%.2f", low_ticks), sprintf("%.1f", high_ticks))
+
+p_3r_row2 <- ggplot(plot_long_3r_row2, aes(x = error_label, y = ratio_plot, fill = format_label)) +
   geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  geom_rect(data = break_data,
+            aes(xmin = -Inf, xmax = Inf,
+                ymin = low_visual_end, ymax = high_visual_start),
+            inherit.aes = FALSE, fill = "white") +
+  geom_hline(data = break_data, aes(yintercept = low_visual_end), linewidth = 0.4) +
+  geom_hline(data = break_data, aes(yintercept = high_visual_start), linewidth = 0.4) +
   facet_wrap(~ length_label, nrow = 1) +
   color_scale +
-  scale_y_continuous(breaks = seq(0, 0.5, by = 0.1), expand = expansion(mult = c(0, 0.05))) +
+  scale_y_continuous(breaks = breaks_r2, labels = labels_r2,
+                     expand = expansion(mult = c(0, 0.05))) +
   labs(x = "Error rate", y = "Compression ratio") +
   common_theme +
   guides(fill = guide_legend(nrow = 1))
