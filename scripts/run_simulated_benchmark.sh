@@ -50,10 +50,19 @@ log() {
 check_tool() {
     local tool="$1"
     local path="$2"
-    if [[ ! -x "$path" ]]; then
-        echo "ERROR: $tool not found or not executable at: $path"
-        echo "Please install $tool or update the path in this script."
-        exit 1
+    # For Python scripts, just check if file exists and is readable
+    if [[ "$path" == *.py ]]; then
+        if [[ ! -r "$path" ]]; then
+            echo "ERROR: $tool not found at: $path"
+            echo "Please install $tool or update the path in this script."
+            exit 1
+        fi
+    else
+        if [[ ! -x "$path" ]]; then
+            echo "ERROR: $tool not found or not executable at: $path"
+            echo "Please install $tool or update the path in this script."
+            exit 1
+        fi
     fi
 }
 
