@@ -1,0 +1,19 @@
+nohup: ignoring input
+[2026-04-21 14:20:29] Starting simulated data benchmarking pipeline
+[2026-04-21 14:20:29] Configuration:
+[2026-04-21 14:20:29]   DIR_BASE=/home/hasitha/data/projects/tracepoints-paper
+[2026-04-21 14:20:29]   SCRATCH_DIR=/home/hasitha/data/projects/scratch/
+[2026-04-21 14:20:29]   NUM_RECORDS=10000
+[2026-04-21 14:20:29]   THREADS=8
+[2026-04-21 14:20:29] Starting data generation...
+[2026-04-21 14:20:29] Generating: length=100, error=0.001
+[Benchmark]
+=> Total.reads            10000
+=> Time.Benchmark         4.75 ms (   10 Kcalls,    474 ns/call {min390ns,Max64.37us})
+  => Time.Alignment       1.31 ms ( 27.69 %) (   10 Kcalls,    131 ns/call {min89ns,Max8.13us})
+Converted /home/hasitha/data/projects/tracepoints-paper/simulated-data/alns/set_100_0001.out to /home/hasitha/data/projects/tracepoints-paper/simulated-data/alns/set_100_0001.paf
+[INFO ] Building sequence index from 1 file(s)...
+[INFO ] Reading PAF file...
+[INFO ] Processing 10000 PAF records using 8 threads
+[E::fai_retrieve] Failed to retrieve block: unexpected end of file
+scripts/run_simulated_benchmark.sh: line 101: 1763995 Segmentation fault      "$pafcheck" --paf "$dir_base/simulated-data/alns/$prefix.paf" --sequence-files "$dir_base/simulated-data/seqs/$prefix.fa" --threads "$THREADS"
