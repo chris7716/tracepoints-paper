@@ -43,8 +43,15 @@ df <- pivot_metric(raw, "disk_bits_per_e", "disk_bits_per_e") %>%
     method = factor(method, levels = methods, labels = labels),
     eps_label = paste0(eps * 100, "%"),
     eps_label = fct_reorder(eps_label, eps),
-    n_label = paste0("n = ", scales::comma(n)),
-    n_label = fct_reorder(n_label, n)
+    n_label = factor(
+      case_when(
+        n == 100 ~ "100 bp",
+        n == 1000 ~ "1 Kb",
+        n == 10000 ~ "10 Kb",
+        n == 100000 ~ "100 Kb"
+      ),
+      levels = c("100 bp", "1 Kb", "10 Kb", "100 Kb")
+    )
   )
 
 # --- Colors and theme (matching the paper) -----------------------------------
