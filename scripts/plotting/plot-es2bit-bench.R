@@ -120,7 +120,7 @@ combo_plot <- function(df, disk_col, gz_col, y_lab) {
     scale_alpha_manual(values = alpha_vals, guide = "none") +
     scale_y_continuous(breaks = scales::breaks_pretty(n = 8)) +
     labs(x = "Error rate", y = y_lab, fill = "Method",
-         caption = "Solid = disk, faded = gzip") +
+         caption = "Solid = uncompressed, faded = gzip") +
     common_theme +
     guides(fill = guide_legend(nrow = 1, override.aes = list(alpha = 1)))
 }
