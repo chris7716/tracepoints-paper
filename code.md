@@ -485,10 +485,12 @@ echo "Benchmark complete. Results in: $REPORT"
 
 ## Real data
 
+### Download
+
 Human pangenome:
 
 ```shell
-bash $dir_base/merge_by_target.sh
+aws s3 sync s3://garrisonlab/hprcv2/pafs/all-vs-1/ . --no-sign-request
 ```
 
 T2T ape pangenome:
@@ -504,7 +506,9 @@ wget -c https://garrisonlab.s3.amazonaws.com/t2t-primates/primates16.20240512.fa
 aws s3 sync s3://garrisonlab/t2t-primates/wfmash-v0.13.0/alignments_fixedSiamang/ . --no-sign-request
 ```
 
-Real data sizes:
+### Statistics
+
+Sizes:
 
 ```shell
 cd $scratch_dir/hprcv2-impg-wf/pafs # Witout the empty ones
@@ -519,12 +523,18 @@ wc -c *.paf.gz | tail -n 1 | awk '{print $1/1024/1024/1024}' # 21.243 GBs
 # including HPRCy1-vs-*
 wc -c *.paf | tail -n 1 | awk '{print $1/1024/1024/1024}' # 545.929 GBs
 wc -c *.paf.gz | tail -n 1 | awk '{print $1/1024/1024/1024}' # 152.003 GBs
+```
 
+Alignment statistics:
 
+```shell
 python3 $dir_base/scripts/paf_alignment_stats.py -t 16 --min-identity 0.0 *.paf.gz > t2t-ape-pangenome.aln-stats.tsv
 python3 $dir_base/scripts/paf_alignment_stats.py -t 48 --min-identity 0.0 *.paf > hprcv2-25k.aln-stats.tsv
+```
 
-# Input alignment score distributions (gap-affine2p scores from CIGARs)
+Score distributions (gap-affine2p scores from CIGARs):
+
+```shell
 # Uses huge max-complexity to get 1 tracepoint per alignment (fast, just computes sc:i: scores)
 
 # HPRCv2
@@ -568,8 +578,12 @@ find . -name "*.paf.gz" | \
   | sort -t$'\t' -k2,2 -k1,1n | uniq -c \
   | awk 'BEGIN{OFS="\t"; print "score","frequency","target"}{print $2,$1,$3}' \
   > $dir_base/t2t-ape-pangenome/t2t-ape-pangenome.input-score-frequency.by-target.tsv
+```
 
-cd encode
+Tracepoint statistics:
+
+```shell
+cd .../encode
 
 python3 $dir_base/scripts/paf_tracepoint_stats.py -t 48 *.diagonal-distance.32.tp.paf > t2t-ape-pangenome.diagonal-distance-32.tp-stats.tsv
 python3 $dir_base/scripts/paf_tracepoint_stats.py -t 48 *.edit-distance.32.tp.paf > t2t-ape-pangenome.edit-distance-32.tp-stats.tsv
@@ -577,6 +591,8 @@ python3 $dir_base/scripts/paf_tracepoint_stats.py -t 48 *.edit-distance.32.tp.pa
 python3 $dir_base/scripts/paf_tracepoint_stats.py -t 48 *.diagonal-distance.32.tp.paf > hprcv2-25k.diagonal-distance-32.tp-stats.tsv
 python3 $dir_base/scripts/paf_tracepoint_stats.py -t 48 *.edit-distance.32.tp.paf > hprcv2-25k.edit-distance-32.tp-stats.tsv
 ```
+
+### Benchmarking
 
 Real data - PAF CIGAR -> PAF TRACEPOINTS -> TPA -> PAF TRACEPOINTS -> PAF CIGAR:
 
