@@ -46,11 +46,11 @@ df <- pivot_metric(raw, "disk_bits_per_e", "disk_bits_per_e") %>%
     n_label = factor(
       case_when(
         n == 100 ~ "100 bp",
-        n == 1000 ~ "1 Kb",
-        n == 10000 ~ "10 Kb",
-        n == 100000 ~ "100 Kb"
+        n == 1000 ~ "1 Kbp",
+        n == 10000 ~ "10 Kbp",
+        n == 100000 ~ "100 Kbp"
       ),
-      levels = c("100 bp", "1 Kb", "10 Kb", "100 Kb")
+      levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")
     )
   )
 

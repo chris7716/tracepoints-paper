@@ -45,11 +45,11 @@ df_delta <- data %>%
     length_label = factor(
       case_when(
         l == 100 ~ "100 bp",
-        l == 1000 ~ "1 Kb",
-        l == 10000 ~ "10 Kb",
-        l == 100000 ~ "100 Kb"
+        l == 1000 ~ "1 Kbp",
+        l == 10000 ~ "10 Kbp",
+        l == 100000 ~ "100 Kbp"
       ),
-      levels = c("100 bp", "1 Kb", "10 Kb", "100 Kb")
+      levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")
     ),
     error_label = factor(paste0(e * 100, "%"), levels = c("1%", "10%", "20%")),
     delta_label = factor(paste0("t=", mc), levels = c("t=32", "t=64", "t=128", "t=256", "t=512", "t=1024"))
@@ -94,11 +94,11 @@ df_tp_counts <- data %>%
     length_label = factor(
       case_when(
         l == 100 ~ "100 bp",
-        l == 1000 ~ "1 Kb",
-        l == 10000 ~ "10 Kb",
-        l == 100000 ~ "100 Kb"
+        l == 1000 ~ "1 Kbp",
+        l == 10000 ~ "10 Kbp",
+        l == 100000 ~ "100 Kbp"
       ),
-      levels = c("100 bp", "1 Kb", "10 Kb", "100 Kb")
+      levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")
     ),
     error_label = factor(paste0(e * 100, "%"), levels = c("1%", "10%", "20%"))
   )
@@ -228,9 +228,9 @@ df_sizes <- data %>%
                        cm == "edit-distance" ~ "EB-TP",
                        cm == "diagonal-distance" ~ "DB-TP"),
     length_label = factor(
-      case_when(l == 100 ~ "100 bp", l == 1000 ~ "1 Kb",
-                l == 10000 ~ "10 Kb", l == 100000 ~ "100 Kb"),
-      levels = c("100 bp", "1 Kb", "10 Kb", "100 Kb")),
+      case_when(l == 100 ~ "100 bp", l == 1000 ~ "1 Kbp",
+                l == 10000 ~ "10 Kbp", l == 100000 ~ "100 Kbp"),
+      levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")),
     error_label = factor(paste0(e * 100, "%"), levels = c("1%", "10%", "20%"))
   )
 
@@ -263,7 +263,7 @@ size_colors <- scale_fill_manual(
 
 # Row 1 (100 bp, 1 Kb): linear free_y, no break needed
 p_sizes_row1 <- ggplot(
-    filter(sizes_long, length_label %in% c("100 bp", "1 Kb")),
+    filter(sizes_long, length_label %in% c("100 bp", "1 Kbp")),
     aes(x = error_label, y = bytes, fill = format_label)) +
   geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
   facet_wrap(~ length_label, nrow = 1, scales = "free_y") +
@@ -307,9 +307,9 @@ make_broken_size_panel <- function(df_panel, low_max, high_max,
 }
 
 # Peak values (bytes): 10 Kb ≈ 16 MB; 100 Kb ≈ 150 MB
-p_sizes_10k  <- make_broken_size_panel(filter(sizes_long, length_label == "10 Kb"),
+p_sizes_10k  <- make_broken_size_panel(filter(sizes_long, length_label == "10 Kbp"),
                                        low_max = 2.0e6,  high_max = 1.7e7)
-p_sizes_100k <- make_broken_size_panel(filter(sizes_long, length_label == "100 Kb"),
+p_sizes_100k <- make_broken_size_panel(filter(sizes_long, length_label == "100 Kbp"),
                                        low_max = 1.5e7, high_max = 1.7e8) +
   theme(axis.title.y = element_blank())
 

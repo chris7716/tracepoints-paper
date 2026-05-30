@@ -28,11 +28,11 @@ df <- df %>%
     length_label = factor(
       case_when(
         l == 100 ~ "100 bp",
-        l == 1000 ~ "1 Kb",
-        l == 10000 ~ "10 Kb",
-        l == 100000 ~ "100 Kb"
+        l == 1000 ~ "1 Kbp",
+        l == 10000 ~ "10 Kbp",
+        l == 100000 ~ "100 Kbp"
       ),
-      levels = c("100 bp", "1 Kb", "10 Kb", "100 Kb")
+      levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")
     ),
     error_label = factor(
       paste0(e * 100, "%"),
@@ -112,8 +112,8 @@ library(gridExtra)
 
 plot_long_3rates <- plot_long %>% filter(error_label != "5%")
 
-plot_long_3r_row1 <- plot_long_3rates %>% filter(length_label %in% c("100 bp", "1 Kb"))
-plot_long_3r_row2 <- plot_long_3rates %>% filter(length_label %in% c("10 Kb", "100 Kb"))
+plot_long_3r_row1 <- plot_long_3rates %>% filter(length_label %in% c("100 bp", "1 Kbp"))
+plot_long_3r_row2 <- plot_long_3rates %>% filter(length_label %in% c("10 Kbp", "100 Kbp"))
 
 p_3r_row1 <- ggplot(plot_long_3r_row1, aes(x = error_label, y = ratio, fill = format_label)) +
   geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
@@ -143,8 +143,8 @@ transform_y <- function(y) {
 plot_long_3r_row2 <- plot_long_3r_row2 %>%
   mutate(ratio_plot = transform_y(pmin(ratio, high_max)))
 
-break_data <- data.frame(length_label = factor(c("10 Kb", "100 Kb"),
-  levels = c("100 bp", "1 Kb", "10 Kb", "100 Kb")))
+break_data <- data.frame(length_label = factor(c("10 Kbp", "100 Kbp"),
+  levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")))
 
 low_ticks <- seq(0, low_max, by = 0.01)
 high_ticks <- c(0.1, 0.2, 0.3)
@@ -202,11 +202,11 @@ df_runtime <- data %>%
     length_label = factor(
       case_when(
         l == 100 ~ "100 bp",
-        l == 1000 ~ "1 Kb",
-        l == 10000 ~ "10 Kb",
-        l == 100000 ~ "100 Kb"
+        l == 1000 ~ "1 Kbp",
+        l == 10000 ~ "10 Kbp",
+        l == 100000 ~ "100 Kbp"
       ),
-      levels = c("100 bp", "1 Kb", "10 Kb", "100 Kb")
+      levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")
     ),
     error_label = factor(paste0(e * 100, "%"), levels = c("1%", "10%", "20%"))
   )
@@ -283,13 +283,13 @@ offset <- break_upper - break_lower - gap_size  # 145
 
 df_runtime_plot <- df_combined_runtime %>%
   mutate(
-    runtime_plot = ifelse(length_label == "100 Kb" & runtime > break_lower,
+    runtime_plot = ifelse(length_label == "100 Kbp" & runtime > break_lower,
                           runtime - offset, runtime)
   )
 
 # Break indicator (white band + ~ marks on y-axis) only in 100 Kb facet
 break_data <- data.frame(
-  length_label = factor("100 Kb", levels = c("100 bp", "1 Kb", "10 Kb", "100 Kb"))
+  length_label = factor("100 Kbp", levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp"))
 )
 
 
@@ -342,7 +342,7 @@ t_100kb <- g1_dc$layout$t[idx_100kb]
 l_100kb <- g1_dc$layout$l[idx_100kb]
 
 # Convert break zone to NPC (normalized panel coordinates)
-max_y_100kb <- max(df_runtime_plot$runtime_plot[df_runtime_plot$length_label == "100 Kb"])
+max_y_100kb <- max(df_runtime_plot$runtime_plot[df_runtime_plot$length_label == "100 Kbp"])
 y_expand <- 0.05
 y_range <- max_y_100kb * (1 + y_expand)
 y_npc_lo <- break_lower / y_range
