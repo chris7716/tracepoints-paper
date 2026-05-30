@@ -367,7 +367,49 @@ g1_dc$widths <- maxWidth_dc
 g2_dc$widths <- maxWidth_dc
 p_decoding_cost <- grid.arrange(g1_dc, g2_dc, ncol = 1, heights = c(0.45, 0.55))
 
-ggsave(file.path(fig_dir, "decoding_cost.png"), p_decoding_cost, width = 10, height = 6, dpi = 300, bg = "white")
-ggsave(file.path(fig_dir, "decoding_cost.pdf"), p_decoding_cost, width = 10, height = 6, bg = "white")
+ggsave(file.path(fig_dir, "decoding_cost_broken.png"), p_decoding_cost, width = 10, height = 6, dpi = 300, bg = "white")
+ggsave(file.path(fig_dir, "decoding_cost_broken.pdf"), p_decoding_cost, width = 10, height = 6, bg = "white")
+
+message("Figure saved: decoding_cost_broken.png/pdf")
+
+# --- Log-scale version in milliseconds (Figure 3 in the manuscript) ---
+# Reviewer requested log time axes; ms keeps all values >1 so log bars grow upward.
+log_ticks_major <- as.vector(outer(c(1, 3), 10^(0:6)))
+log_ticks_minor <- as.vector(outer(c(2, 5), 10^(0:6)))
+
+df_runtime_ms <- df_combined_runtime %>% mutate(runtime_ms = runtime * 1000)
+
+p_dc_runtime_log <- ggplot(df_runtime_ms, aes(x = error_label, y = runtime_ms, fill = method)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  facet_wrap(~ length_label, nrow = 1, scales = "free_y") +
+  scale_fill_manual(values = method_colors_5, name = "Method") +
+  scale_y_log10(expand = expansion(mult = c(0, 0.05)),
+                breaks = log_ticks_major, minor_breaks = log_ticks_minor,
+                labels = scales::label_number(scale_cut = scales::cut_short_scale())) +
+  labs(x = NULL, y = "Time (ms)") +
+  common_theme +
+  theme(legend.position = "none", axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+p_dc_memory_log <- ggplot(df_combined_memory, aes(x = error_label, y = memory_mb, fill = method)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  facet_wrap(~ length_label, nrow = 1, scales = "free_y") +
+  scale_fill_manual(values = method_colors_5, name = "Method") +
+  scale_y_log10(expand = expansion(mult = c(0.02, 0.05)),
+                breaks = log_ticks_major, minor_breaks = log_ticks_minor,
+                labels = scales::label_number(scale_cut = scales::cut_short_scale())) +
+  labs(x = "Error rate", y = "Peak memory (MB)") +
+  common_theme +
+  theme(strip.text = element_blank()) +
+  guides(fill = guide_legend(nrow = 1))
+
+g1_dc_log <- ggplotGrob(p_dc_runtime_log)
+g2_dc_log <- ggplotGrob(p_dc_memory_log + theme(legend.position = "bottom") + guides(fill = guide_legend(nrow = 1)))
+maxWidth_dc_log <- unit.pmax(g1_dc_log$widths, g2_dc_log$widths)
+g1_dc_log$widths <- maxWidth_dc_log
+g2_dc_log$widths <- maxWidth_dc_log
+p_decoding_cost_log <- grid.arrange(g1_dc_log, g2_dc_log, ncol = 1, heights = c(0.45, 0.55))
+
+ggsave(file.path(fig_dir, "decoding_cost.png"), p_decoding_cost_log, width = 10, height = 6, dpi = 300, bg = "white")
+ggsave(file.path(fig_dir, "decoding_cost.pdf"), p_decoding_cost_log, width = 10, height = 6, bg = "white")
 
 message("Figure saved: decoding_cost.png/pdf")
