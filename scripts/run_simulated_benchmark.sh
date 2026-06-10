@@ -161,7 +161,7 @@ run_benchmark() {
     mkdir -p "$dir_base/simulated-data"/{encode,compress,decompress,decode}
     mkdir -p "$scratch_dir/benchmark_tmp"
 
-    REPORT="$dir_base/simulated-data/benchmark.results.tsv"
+    REPORT="$dir_base/simulated-data/benchmark.results.fastga-no-diff.tsv"
     TMP_DIR="$scratch_dir/benchmark_tmp"
 
     # -------------------------------------------------------------------------
@@ -259,8 +259,8 @@ run_benchmark() {
     > "$TMP_DIR/jobs.txt"
     for l in 100 1000 10000 100000; do
         for e in 0.001; do
-            for tp_type in fastga standard; do
-                if [ "$tp_type" = "fastga" ]; then
+            for tp_type in fastga-no-diff; do
+                if [ "$tp_type" = "fastga" ] || [ "$tp_type" = "fastga-no-diff" ]; then
                     cm_list="none"
                     mc_list="100"
                 else
@@ -302,11 +302,14 @@ run_benchmark() {
 
         log "Benchmarking: $full_prefix"
 
-        [ "$tp_type" = "fastga" ] && cmd_args="" || cmd_args="--complexity-metric $cm"
-        [ "$tp_type" = "fastga" ] && strategy_args="--strategy rice;rice" || strategy_args=""
+        [ "$tp_type" = "fastga" ] || [ "$tp_type" = "fastga-no-diff" ] && cmd_args="" || cmd_args="--complexity-metric $cm"
+        if [ "$tp_type" = "fastga" ]; then strategy_args="--strategy rice;rice"
+        elif [ "$tp_type" = "fastga-no-diff" ]; then strategy_args="--strategy rice"
+        else strategy_args=""
+        fi
 
         # Determine number of repeats
-        if [ "$mc" -le 64 ] || [ "$tp_type" = "fastga" ]; then
+        if [ "$mc" -le 64 ] || [ "$tp_type" = "fastga" ] || [ "$tp_type" = "fastga-no-diff" ]; then
             num_repeats=10
         else
             num_repeats=1
