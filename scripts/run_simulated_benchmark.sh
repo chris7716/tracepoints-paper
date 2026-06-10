@@ -117,6 +117,8 @@ generate_data() {
                 -t 1
 
             # Convert SEQ to FASTA
+            # Remove stale index so cigzip rebuilds it from the new FASTA content
+            rm -f "$dir_base/simulated-data/seqs/$prefix.fa.fai"
             # WFA2 generate_dataset writes > = seqshort (PATTERN/query) and < = seqlong (TEXT/target)
             awk '
               BEGIN { counter=1 }
