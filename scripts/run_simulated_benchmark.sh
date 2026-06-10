@@ -98,7 +98,7 @@ generate_data() {
     mkdir -p "$dir_base/simulated-data/seqs"
 
     for l in 100 1000 10000 100000; do
-        for e in 0.001; do
+        for e in 0.001 0.01 0.05 0.10 0.20; do
             log "Generating: length=$l, error=$e"
 
             l_nodot=$(echo $l | sed 's/\.//g')
@@ -175,7 +175,7 @@ run_benchmark() {
     > "$TMP_DIR/cigar_sizes.txt"
 
     for l in 100 1000 10000 100000; do
-        for e in 0.001; do
+        for e in 0.001 0.01 0.05 0.10 0.20; do
             l_nodot=$(echo $l | sed 's/\.//g')
             e_nodot=$(echo $e | sed 's/\.//g')
             prefix=set_${l_nodot}_${e_nodot}
@@ -261,7 +261,7 @@ run_benchmark() {
     # Generate jobs
     > "$TMP_DIR/jobs.txt"
     for l in 100 1000 10000 100000; do
-        for e in 0.001; do
+        for e in 0.001 0.01 0.05 0.10 0.20; do
             for tp_type in fastga-no-diff; do
                 if [ "$tp_type" = "fastga" ] || [ "$tp_type" = "fastga-no-diff" ]; then
                     cm_list="none"
