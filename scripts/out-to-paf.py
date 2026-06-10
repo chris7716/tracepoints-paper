@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
-Convert alignment output to PAF format.
+Convert WFA2 alignment output to PAF format.
 Assumes global (end-to-end) alignment.
-D = deletion in query (gap in query, consumes target)
-I = insertion in query (gap in target, consumes query)
-M = match (converted to '=' in output for standard CIGAR)
-X = mismatch
+
+WFA2 CIGAR convention (opposite of standard PAF/SAM):
+  D = extra base in PATTERN (= standard PAF I: insertion in query, consumes query)
+  I = extra base in TEXT    (= standard PAF D: deletion in query, consumes target)
+  M = match/mismatch (converted to '=' in output)
+
+This script swaps I<->D to produce standard PAF CIGAR convention.
 """
 
 import re
@@ -64,14 +67,17 @@ def convert_to_paf(input_file, output_file):
             alignment_score = int(parts[0].strip())
             cigar = parts[1].strip()
 
-            # Replace M with = for standard CIGAR (M -> = for sequence match)
-            cigar_standard = cigar.replace('M', '=')
+            # WFA2 uses I=extra-TEXT-base and D=extra-PATTERN-base, which is the
+            # opposite of standard PAF (I=query-consuming, D=target-consuming).
+            # Swap I<->D to normalise to standard PAF convention before parsing.
+            cigar_paf = cigar.replace('D', '\x00').replace('I', 'D').replace('\x00', 'I')
+            cigar_standard = cigar_paf.replace('M', '=')
 
             # Each line is a separate alignment: query_N to target_N
             target_id = query_id
 
-            # Parse CIGAR (using original before replacement)
-            query_len, target_len, matches, aln_block_len = parse_cigar(cigar)
+            # Parse normalised CIGAR with standard PAF I/D convention
+            query_len, target_len, matches, aln_block_len = parse_cigar(cigar_paf)
 
             # Global alignment: end-to-end
             query_start = 0
