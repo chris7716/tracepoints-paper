@@ -15,7 +15,7 @@ pdflatex -interaction=nonstopmode paper-main.tex
 
 echo "--- Building paper-supplementary.pdf ---"
 pdflatex -interaction=nonstopmode paper-supplementary.tex
-bibtex paper-supplementary || true  # no citations in supplementary
+bibtex paper-supplementary
 pdflatex -interaction=nonstopmode paper-supplementary.tex
 pdflatex -interaction=nonstopmode paper-supplementary.tex
 

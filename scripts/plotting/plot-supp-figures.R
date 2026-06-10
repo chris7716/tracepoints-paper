@@ -45,11 +45,11 @@ df_delta <- data %>%
     length_label = factor(
       case_when(
         l == 100 ~ "100 bp",
-        l == 1000 ~ "1 Kb",
-        l == 10000 ~ "10 Kb",
-        l == 100000 ~ "100 Kb"
+        l == 1000 ~ "1 Kbp",
+        l == 10000 ~ "10 Kbp",
+        l == 100000 ~ "100 Kbp"
       ),
-      levels = c("100 bp", "1 Kb", "10 Kb", "100 Kb")
+      levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")
     ),
     error_label = factor(paste0(e * 100, "%"), levels = c("1%", "10%", "20%")),
     delta_label = factor(paste0("t=", mc), levels = c("t=32", "t=64", "t=128", "t=256", "t=512", "t=1024"))
@@ -94,11 +94,11 @@ df_tp_counts <- data %>%
     length_label = factor(
       case_when(
         l == 100 ~ "100 bp",
-        l == 1000 ~ "1 Kb",
-        l == 10000 ~ "10 Kb",
-        l == 100000 ~ "100 Kb"
+        l == 1000 ~ "1 Kbp",
+        l == 10000 ~ "10 Kbp",
+        l == 100000 ~ "100 Kbp"
       ),
-      levels = c("100 bp", "1 Kb", "10 Kb", "100 Kb")
+      levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")
     ),
     error_label = factor(paste0(e * 100, "%"), levels = c("1%", "10%", "20%"))
   )
@@ -212,4 +212,120 @@ ggsave(file.path(fig_dir, "figS3_score_distributions.pdf"), p_scores, width = 10
 
 message("Figure S3 saved: figS3_score_distributions.pdf")
 
-message("\nAll supplementary figures (S1, S2, S3) generated successfully!")
+# =============================================================================
+# Figure S7: Absolute file sizes (simulated data) — complements main Fig 2
+# =============================================================================
+library(scales)
+
+df_sizes <- data %>%
+  filter(memory_mode == "high") %>%
+  filter((tp_type == "fastga" & mc == 100) | (tp_type == "standard" & mc == 32)) %>%
+  filter(e != 0.05) %>%
+  mutate(
+    bgzip_bytes = size_cigar_bgzip_bytes,
+    tpa_bytes   = size_tpa_bytes,
+    method = case_when(tp_type == "fastga" ~ "FL-TP",
+                       cm == "edit-distance" ~ "EB-TP",
+                       cm == "diagonal-distance" ~ "DB-TP"),
+    length_label = factor(
+      case_when(l == 100 ~ "100 bp", l == 1000 ~ "1 Kbp",
+                l == 10000 ~ "10 Kbp", l == 100000 ~ "100 Kbp"),
+      levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")),
+    error_label = factor(paste0(e * 100, "%"), levels = c("1%", "10%", "20%"))
+  )
+
+fltp_s <- df_sizes %>% filter(method == "FL-TP") %>%
+  select(l, e, length_label, error_label, bgzip_bytes, fltp_tpa = tpa_bytes)
+ebtp_s <- df_sizes %>% filter(method == "EB-TP") %>%
+  select(l, e, length_label, error_label, ebtp_tpa = tpa_bytes)
+dbtp_s <- df_sizes %>% filter(method == "DB-TP") %>%
+  select(l, e, length_label, error_label, dbtp_tpa = tpa_bytes)
+
+sizes_wide <- fltp_s %>%
+  left_join(ebtp_s, by = c("l", "e", "length_label", "error_label")) %>%
+  left_join(dbtp_s, by = c("l", "e", "length_label", "error_label"))
+
+sizes_long <- sizes_wide %>%
+  pivot_longer(cols = c(bgzip_bytes, fltp_tpa, ebtp_tpa, dbtp_tpa),
+               names_to = "format", values_to = "bytes") %>%
+  mutate(format_label = factor(
+    case_when(format == "bgzip_bytes" ~ "CG BGZIP",
+              format == "fltp_tpa" ~ "FL-TP TPA",
+              format == "ebtp_tpa" ~ "EB-TP TPA",
+              format == "dbtp_tpa" ~ "DB-TP TPA"),
+    levels = c("CG BGZIP", "FL-TP TPA", "EB-TP TPA", "DB-TP TPA")))
+
+size_colors <- scale_fill_manual(
+  values = c("CG BGZIP" = "#1b9e77", "FL-TP TPA" = "#7570b3",
+             "EB-TP TPA" = "#d95f02", "DB-TP TPA" = "#377eb8"),
+  name = "Method"
+)
+
+# Row 1 (100 bp, 1 Kb): linear free_y, no break needed
+p_sizes_row1 <- ggplot(
+    filter(sizes_long, length_label %in% c("100 bp", "1 Kbp")),
+    aes(x = error_label, y = bytes, fill = format_label)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  facet_wrap(~ length_label, nrow = 1, scales = "free_y") +
+  size_colors +
+  scale_y_continuous(labels = label_bytes(units = "auto_si"), n.breaks = 8,
+                     expand = expansion(mult = c(0, 0.1)), minor_breaks = NULL) +
+  labs(x = NULL, y = "File size") +
+  common_theme +
+  theme(legend.position = "none", axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), axis.title.x = element_blank())
+
+# Row 2 (10 Kb, 100 Kb): broken y-axis, per-panel break value
+make_broken_size_panel <- function(df_panel, low_max, high_max,
+                                   low_visual_end = 0.6, gap_visual = 0.03) {
+  high_visual_start <- low_visual_end + gap_visual
+  high_visual_end <- 1.0
+  low_scale <- low_visual_end / low_max
+  high_scale <- (high_visual_end - high_visual_start) / (high_max - low_max)
+  tf <- function(y) ifelse(y <= low_max, y * low_scale,
+                           high_visual_start + (y - low_max) * high_scale)
+
+  df_plot <- df_panel %>% mutate(bytes_plot = tf(pmin(bytes, high_max)))
+
+  low_ticks  <- pretty(c(0, low_max), n = 4); low_ticks <- low_ticks[low_ticks <= low_max]
+  high_ticks <- pretty(c(low_max, high_max), n = 3); high_ticks <- high_ticks[high_ticks > low_max & high_ticks <= high_max]
+  brks   <- c(tf(low_ticks), tf(high_ticks))
+  labs_y <- label_bytes(units = "auto_si")(c(low_ticks, high_ticks))
+
+  ggplot(df_plot, aes(x = error_label, y = bytes_plot, fill = format_label)) +
+    geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+    annotate("rect", xmin = -Inf, xmax = Inf,
+             ymin = low_visual_end, ymax = high_visual_start, fill = "white") +
+    geom_hline(yintercept = low_visual_end,   linewidth = 0.4) +
+    geom_hline(yintercept = high_visual_start, linewidth = 0.4) +
+    facet_wrap(~ length_label, nrow = 1) +
+    size_colors +
+    scale_y_continuous(breaks = brks, labels = labs_y,
+                       expand = expansion(mult = c(0, 0.05))) +
+    labs(x = NULL, y = "File size") +
+    common_theme
+}
+
+# Peak values (bytes): 10 Kb ≈ 16 MB; 100 Kb ≈ 150 MB
+p_sizes_10k  <- make_broken_size_panel(filter(sizes_long, length_label == "10 Kbp"),
+                                       low_max = 2.0e6,  high_max = 1.7e7)
+p_sizes_100k <- make_broken_size_panel(filter(sizes_long, length_label == "100 Kbp"),
+                                       low_max = 1.5e7, high_max = 1.7e8) +
+  theme(axis.title.y = element_blank())
+
+library(patchwork)
+p_sizes_row2 <- (p_sizes_10k + p_sizes_100k) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+
+p_sizes_row2 <- p_sizes_row2 & labs(x = "Error rate")
+
+p_sizes <- p_sizes_row1 / p_sizes_row2 +
+  plot_layout(heights = c(0.45, 0.55), guides = "collect") &
+  theme(legend.position = "bottom")
+
+ggsave(file.path(fig_dir, "figS7_absolute_sizes.png"), p_sizes, width = 10, height = 6, dpi = 300, bg = "white")
+ggsave(file.path(fig_dir, "figS7_absolute_sizes.pdf"), p_sizes, width = 10, height = 6, bg = "white")
+message("Figure S7 saved: figS7_absolute_sizes.pdf")
+
+message("\nAll supplementary figures (S1, S2, S3, S7) generated successfully!")

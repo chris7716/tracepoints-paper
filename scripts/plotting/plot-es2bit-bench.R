@@ -43,8 +43,15 @@ df <- pivot_metric(raw, "disk_bits_per_e", "disk_bits_per_e") %>%
     method = factor(method, levels = methods, labels = labels),
     eps_label = paste0(eps * 100, "%"),
     eps_label = fct_reorder(eps_label, eps),
-    n_label = paste0("n = ", scales::comma(n)),
-    n_label = fct_reorder(n_label, n)
+    n_label = factor(
+      case_when(
+        n == 100 ~ "100 bp",
+        n == 1000 ~ "1 Kbp",
+        n == 10000 ~ "10 Kbp",
+        n == 100000 ~ "100 Kbp"
+      ),
+      levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")
+    )
   )
 
 # --- Colors and theme (matching the paper) -----------------------------------
@@ -113,7 +120,7 @@ combo_plot <- function(df, disk_col, gz_col, y_lab) {
     scale_alpha_manual(values = alpha_vals, guide = "none") +
     scale_y_continuous(breaks = scales::breaks_pretty(n = 8)) +
     labs(x = "Error rate", y = y_lab, fill = "Method",
-         caption = "Solid = disk, faded = gzip") +
+         caption = "Solid = uncompressed, faded = gzip") +
     common_theme +
     guides(fill = guide_legend(nrow = 1, override.aes = list(alpha = 1)))
 }

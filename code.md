@@ -483,19 +483,62 @@ rm -rf $scratch_dir/jobs
 echo "Benchmark complete. Results in: $REPORT"
 ```
 
+### Indel-skewed check
+
+The simulator draws each edit as mismatch/insertion/deletion with equal probability, so simulated indels are balanced (I/D ~ 1.0). The `--indels NUM,LENGTH` option adds extra deletions into the text, which appear as insertions in the query->target CIGAR, giving an insertion-skewed dataset to test DB-TP's sensitivity to an indel bias. We run at 10 Kb so the tracepoint streams (not per-record metadata) dominate the TPA, making the storage ratios meaningful. `--indels 2200` gives I/D ~ 5 at 10 Kb (calibrate per length; the simulator is unseeded so exact values vary):
+
+```shell
+mkdir -p $scratch_dir/indeltest && cd $scratch_dir/indeltest
+
+# Balanced (I/D ~ 1.0) vs insertion-skewed (I/D ~ 5)
+$generate_dataset -n 1000 -l 10000 -e 0.20                 -o bal.seq
+$generate_dataset -n 1000 -l 10000 -e 0.20 --indels 2200,1 -o skew.seq
+
+for f in bal skew; do
+  $align_benchmark -i $f.seq -a edit-wfa --wfa-memory high --output $f.out -t 1
+  python3 $out_to_paf $f.out $f.paf
+done
+
+# Per-condition I/D, tracepoint counts, TPA size, and ratio (TPA/PAF), mc=32.
+# Representative run (simulator unseeded; exact values vary):
+#   bal  (I/D 1.00): DB-TP tps=3216   ratio=0.0125 | EB-TP tps=53678  ratio=0.0277
+#   skew (I/D 4.92): DB-TP tps=65919  ratio=0.0291 | EB-TP tps=75132  ratio=0.0265
+# => under skew DB-TP's ratio rises (0.012 -> 0.029) and overtakes EB-TP (~0.027), which is unchanged.
+for f in bal skew; do
+  paf=$(stat -c%s $f.paf)
+  id=$(awk -F'\t' '{for(i=13;i<=NF;i++) if(substr($i,1,5)=="cg:Z:"){s=substr($i,6);num="";
+        for(j=1;j<=length(s);j++){c=substr(s,j,1);if(c~/[0-9]/)num=num c;
+          else{v=num+0;if(c=="I")I+=v;else if(c=="D")D+=v;num=""}}}} END{printf "%.2f",I/D}' $f.paf)
+  echo "=== $f (I/D=$id, PAF=$paf B) ==="
+  for m in diagonal-distance edit-distance; do
+    $cigzip encode --paf $f.paf --type standard --complexity-metric $m --max-complexity 32 --distance edit -o $f.$m.tp.paf
+    tps=$(grep -o 'tp:Z:[^[:space:]]*' $f.$m.tp.paf | awk -F';' '{s+=NF} END{print s}')
+    $cigzip compress --input $f.$m.tp.paf --type standard --complexity-metric $m --max-complexity 32 --output $f.$m.tpa
+    tpa=$(stat -c%s $f.$m.tpa)
+    awk -v m=$m -v tp=$tps -v t=$tpa -v p=$paf 'BEGIN{printf "  %-18s tps=%d TPA=%d B ratio=%.4f\n",m,tp,t,t/p}'
+  done
+done
+```
+
 ## Real data
+
+### Download
 
 Human pangenome:
 
 ```shell
-bash $dir_base/merge_by_target.sh
+mkdir $scratch_dir/hprcv2-25k
+cd $scratch_dir/hprcv2-25k
+
+# Alignments
+aws s3 sync s3://garrisonlab/hprcv2/pafs/all-vs-1/ . --no-sign-request
 ```
 
 T2T ape pangenome:
 
 ```shell
-mkdir -p $dir_base/t2t-ape-pangenome
-cd $dir_base/t2t-ape-pangenome
+mkdir -p $scratch_dir/t2t-ape-pangenome
+cd $scratch_dir/t2t-ape-pangenome
 
 # Sequences
 wget -c https://garrisonlab.s3.amazonaws.com/t2t-primates/primates16.20240512.fa.gz
@@ -504,27 +547,56 @@ wget -c https://garrisonlab.s3.amazonaws.com/t2t-primates/primates16.20240512.fa
 aws s3 sync s3://garrisonlab/t2t-primates/wfmash-v0.13.0/alignments_fixedSiamang/ . --no-sign-request
 ```
 
-Real data sizes:
+### Statistics
+
+Sizes:
 
 ```shell
-cd $scratch_dir/hprcv2-impg-wf/pafs # Witout the empty ones
-find . -maxdepth 1 -name "*.paf" | wc -l # 25221
-find . -maxdepth 1 -name "*.paf" -print0 | xargs -0 cat | wc -c # 1009434909520 bytes -> 940.109518841 GBs
-find . -maxdepth 1 -name "*.paf.gz" -print0 | xargs -0 cat | wc -c # 318372156238 bytes -> 296.507176233 GBs
+cd $scratch_dir/hprcv2-25k
+find . -maxdepth 1 -name "*.paf" -print0 | xargs -0 cat | wc -c | awk '{print $1/1024/1024/1024}' # 940.11 GBs
+find . -maxdepth 1 -name "*.paf.gz" -print0 | xargs -0 cat | wc -c | awk '{print $1/1024/1024/1024}' # 296.507 GBs
+# CIGAR strings only (cg:Z: tag content, excluding the "cg:Z:" prefix)
+find . -maxdepth 1 -name "*.paf" -print0 | xargs -0 cat | awk -F'\t' '{ for (i=13; i<=NF; i++) if (substr($i,1,5)=="cg:Z:") total += length($i) - 5 } END { print total/1024/1024/1024 " GBs" }' # 873.496 GBs
 
 cd $scratch_dir/t2t-ape-pangenome
 # excluding HPRCy1-vs-*
-wc -c *.paf | tail -n 1 | awk '{print $1/1024/1024/1024}' # 78.9188 GBs
-wc -c *.paf.gz | tail -n 1 | awk '{print $1/1024/1024/1024}' # 21.243 GBs
+find . -maxdepth 1 -name "*.paf" ! -name "HPRCy1-vs-*" -print0 | xargs -0 cat | wc -c | awk '{print $1/1024/1024/1024}' # 78.9188 GBs
+find . -maxdepth 1 -name "*.paf.gz" ! -name "HPRCy1-vs-*" -print0 | xargs -0 cat | wc -c | awk '{print $1/1024/1024/1024}' # 21.243 GBs
+# CIGAR strings only (cg:Z: tag content, excluding the "cg:Z:" prefix)
+find . -maxdepth 1 -name "*.paf" ! -name "HPRCy1-vs-*" -print0 | xargs -0 cat | awk -F'\t' '{ for (i=13; i<=NF; i++) if (substr($i,1,5)=="cg:Z:") total += length($i) - 5 } END { print total/1024/1024/1024 " GBs" }' # 78.8078 GBs
 # including HPRCy1-vs-*
-wc -c *.paf | tail -n 1 | awk '{print $1/1024/1024/1024}' # 545.929 GBs
-wc -c *.paf.gz | tail -n 1 | awk '{print $1/1024/1024/1024}' # 152.003 GBs
+find . -maxdepth 1 -name "*.paf" -print0 | xargs -0 cat | wc -c | awk '{print $1/1024/1024/1024}' # 545.929 GBs
+find . -maxdepth 1 -name "*.paf.gz" -print0 | xargs -0 cat | wc -c | awk '{print $1/1024/1024/1024}' # 147.705 GBs
+# CIGAR strings only (cg:Z: tag content, excluding the "cg:Z:" prefix)
+find . -maxdepth 1 -name "*.paf" -print0 | xargs -0 cat | awk -F'\t' '{ for (i=13; i<=NF; i++) if (substr($i,1,5)=="cg:Z:") total += length($i) - 5 } END { print total/1024/1024/1024 " GBs" }' # 545.126 GBs
+```
 
+Alignment statistics:
 
+```shell
 python3 $dir_base/scripts/paf_alignment_stats.py -t 16 --min-identity 0.0 *.paf.gz > t2t-ape-pangenome.aln-stats.tsv
 python3 $dir_base/scripts/paf_alignment_stats.py -t 48 --min-identity 0.0 *.paf > hprcv2-25k.aln-stats.tsv
+```
 
-# Input alignment score distributions (gap-affine2p scores from CIGARs)
+TPA random-access index size vs tracepoint data (one varint byte-offset per alignment record; the .tpa.idx file is excluded from reported storage):
+
+```shell
+# Point tpa_dir at the directory holding the *.tpa and matching *.tpa.idx files
+for tpa_dir in /scratch/hprcv2-25k-tpas /scratch/t2t-ape-pangenome-tpas; do
+  echo "## $tpa_dir"
+  tpa=$(find "$tpa_dir" -name "*.tpa"     -print0 | xargs -0 stat -c%s | awk '{s+=$1} END {print s}')
+  idx=$(find "$tpa_dir" -name "*.tpa.idx" -print0 | xargs -0 stat -c%s | awk '{s+=$1} END {print s}')
+  awk -v tpa="$tpa" -v idx="$idx" 'BEGIN {
+    printf "tpa = %.3f GiB, idx = %.3f GiB, idx/tpa = %.2f%%\n", tpa/1024^3, idx/1024^3, idx/tpa*100
+  }'
+done
+# Human  (EB-TP delta=128): tpa = 23.348 GiB, idx = 1.443 GiB, idx/tpa = 6.18%
+# Primate (EB-TP delta=128): tpa = 0.700 GiB, idx = 0.002 GiB, idx/tpa = 0.29%
+```
+
+Score distributions (gap-affine2p scores from CIGARs):
+
+```shell
 # Uses huge max-complexity to get 1 tracepoint per alignment (fast, just computes sc:i: scores)
 
 # HPRCv2
@@ -568,8 +640,12 @@ find . -name "*.paf.gz" | \
   | sort -t$'\t' -k2,2 -k1,1n | uniq -c \
   | awk 'BEGIN{OFS="\t"; print "score","frequency","target"}{print $2,$1,$3}' \
   > $dir_base/t2t-ape-pangenome/t2t-ape-pangenome.input-score-frequency.by-target.tsv
+```
 
-cd encode
+Tracepoint statistics:
+
+```shell
+cd .../encode
 
 python3 $dir_base/scripts/paf_tracepoint_stats.py -t 48 *.diagonal-distance.32.tp.paf > t2t-ape-pangenome.diagonal-distance-32.tp-stats.tsv
 python3 $dir_base/scripts/paf_tracepoint_stats.py -t 48 *.edit-distance.32.tp.paf > t2t-ape-pangenome.edit-distance-32.tp-stats.tsv
@@ -577,6 +653,8 @@ python3 $dir_base/scripts/paf_tracepoint_stats.py -t 48 *.edit-distance.32.tp.pa
 python3 $dir_base/scripts/paf_tracepoint_stats.py -t 48 *.diagonal-distance.32.tp.paf > hprcv2-25k.diagonal-distance-32.tp-stats.tsv
 python3 $dir_base/scripts/paf_tracepoint_stats.py -t 48 *.edit-distance.32.tp.paf > hprcv2-25k.edit-distance-32.tp-stats.tsv
 ```
+
+### Benchmarking
 
 Real data - PAF CIGAR -> PAF TRACEPOINTS -> TPA -> PAF TRACEPOINTS -> PAF CIGAR:
 
