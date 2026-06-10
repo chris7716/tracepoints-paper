@@ -117,14 +117,15 @@ generate_data() {
                 -t 1
 
             # Convert SEQ to FASTA
+            # WFA2 generate_dataset writes > = seqshort (PATTERN/query) and < = seqlong (TEXT/target)
             awk '
               BEGIN { counter=1 }
               /^>/ {
-                  print ">target_" counter
+                  print ">query_" counter
                   print substr($0, 2)
               }
               /^</ {
-                  print ">query_" counter
+                  print ">target_" counter
                   print substr($0, 2)
                   counter++
               }' "$dir_base/simulated-data/seqs/$prefix.seq" \
