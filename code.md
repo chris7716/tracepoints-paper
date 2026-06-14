@@ -216,7 +216,9 @@ run_benchmark() {
     prefix2=$tp_type.$cm.$mc.$memory_mode
     full_prefix="$prefix.$prefix2"
     [ "$tp_type" = "fastga" ] && cmd_args="" || cmd_args="--complexity-metric $cm"
-    [ "$tp_type" = "fastga" ] && strategy_args="--strategy rice;rice" || strategy_args=""
+    # Use no compression layer for all methods. The empty strategy (standard) defaults to automatic, which selects nocomp.
+    # For fastga we name the rice strategy explicitly, so we must add -nocomp; otherwise an explicit strategy defaults to a zstd wrapper.
+    [ "$tp_type" = "fastga" ] && strategy_args="--strategy rice-nocomp;rice-nocomp" || strategy_args=""
 
     # Repeat 10 times for mc<=64 or fastga to get stable averages; once otherwise
     if [ "$mc" -le 64 ] || [ "$tp_type" = "fastga" ]; then
@@ -666,7 +668,8 @@ Real data - PAF CIGAR -> PAF TRACEPOINTS -> TPA -> PAF TRACEPOINTS -> PAF CIGAR:
 #   (cg:Z: for CIGAR, tp:Z: for tracepoints) - excludes so:i:, sc:i:, etc.
 
 # Benchmark parameters
-MC_LIST="16 32 64 128"  # max-complexity values to test
+MC_LIST="16 32 64 128 256"      # EB-TP/DB-TP max-complexity values (16 = bootstrap warm-up, excluded from reporting)
+FASTGA_MC_LIST="500 1000 2000"  # FL-TP trace spacings (fastga scaling)
 TMP_DIR="$scratch_dir/real_benchmark_tmp"
 mkdir -p $TMP_DIR
 HEADER="dataset\tpaf_file\tcm\tmc\tdecode_mode\tsize_cigar_bytes\tsize_tp_bytes\tnum_tracepoints\tsize_tpa_bytes\tencode_runtime_sec\tencode_memory_kb\tcompress_runtime_sec\tcompress_memory_kb\tdecompress_runtime_sec\tdecompress_memory_kb\tdecode_runtime_sec\tdecode_memory_kb\tnum_alignments\tscore_identical\tscore_improved\tscore_degraded"
@@ -751,14 +754,22 @@ run_benchmark_real() {
         return 0
     fi
 
+    if [ "$cm" = "fastga" ]; then
+        tp_type="fastga";  cm_args="";                         strategy_args="--strategy rice-nocomp;rice-nocomp"
+    elif [ "$cm" = "edit-distance" ]; then
+        tp_type="standard"; cm_args="--complexity-metric $cm"; strategy_args="--strategy rice-nocomp;2d-delta-nocomp"
+    else  # diagonal-distance
+        tp_type="standard"; cm_args="--complexity-metric $cm"; strategy_args="--strategy raw-nocomp;2d-delta-nocomp"
+    fi
+    dist_args="--distance gap-affine2p --penalties 5,8,2,24,1"
+
     # --- ENCODE ---
     \time -v $cigzip encode \
         --paf "$input_paf" \
-        --type standard \
-        --complexity-metric $cm \
+        --type $tp_type \
+        $cm_args \
         --max-complexity $MC \
-        --distance gap-affine2p \
-        --penalties 5,8,2,24,1 \
+        $dist_args \
         -t $(nproc) \
         > "$tp_paf_full" 2> "$encode_log"
 
@@ -783,11 +794,11 @@ run_benchmark_real() {
     \time -v $cigzip compress \
         --input "$tp_paf" \
         --output "$tpa_file" \
-        --type standard \
-        --complexity-metric $cm \
+        --type $tp_type \
+        $cm_args \
         --max-complexity $MC \
-        --distance gap-affine2p \
-        --penalties 5,8,2,24,1 \
+        $strategy_args \
+        $dist_args \
         -t $(nproc) \
         2> "$compress_log"
 
@@ -810,11 +821,10 @@ run_benchmark_real() {
     \time -v $cigzip decode \
         --paf "$decomp_paf" \
         --sequence-list $seq_files \
-        --type standard \
-        --complexity-metric $cm \
+        --type $tp_type \
+        $cm_args \
         --max-complexity $MC \
-        --distance gap-affine2p \
-        --penalties 5,8,2,24,1 \
+        $dist_args \
         --memory-mode high \
         -t $(nproc) \
         > "$decode_paf" 2> "$decode_log"
@@ -941,13 +951,19 @@ for paf in $HPRCV2_PAFS/*.paf.gz; do
     cp "$paf" "$scratch_paf"
     zcat "$scratch_paf" > "$input_paf"
     rm -f "$scratch_paf"
+    # EB-TP runs the full sweep; DB-TP is capped at mc<=64 (larger b gives very large segments and costly WFA
+    # reconstruction on real data). mc=16 is the bootstrap warm-up.
     for cm in edit-distance diagonal-distance; do
         for mc in $MC_LIST; do
-            # diagonal-distance only uses mc=32
-            [[ "$cm" == "diagonal-distance" && "$mc" != "32" ]] && continue
+            [ "$cm" = "diagonal-distance" ] && [ "$mc" -gt 64 ] && continue
             run_benchmark_real "hprcv2-25k" "$input_paf" "$HPRCV2_SEQS" "$cm" "$dir_base" "$cigzip" "$TMP_DIR" "$mc"
         done
     done
+    # FL-TP (fastga): trace spacings $FASTGA_MC_LIST (fastga scaling, like EB/DB-TP). Reconstructs under the same
+    # dual gap-affine model as EB/DB-TP (see run_benchmark_real), so it is a full Table 2 entry.
+    #for fl_mc in $FASTGA_MC_LIST; do
+    #    run_benchmark_real "hprcv2-25k" "$input_paf" "$HPRCV2_SEQS" "fastga" "$dir_base" "$cigzip" "$TMP_DIR" "$fl_mc"
+    #done
     rm -f "$input_paf"
 done
 # Merge HPRCv2 results
@@ -976,13 +992,19 @@ for paf in $PRIMATES_PAFS/*.paf.gz; do
     cp "$paf" "$scratch_paf"
     zcat "$scratch_paf" > "$input_paf"
     rm -f "$scratch_paf"
+    # EB-TP runs the full sweep; DB-TP is capped at mc<=64 (larger b gives very large segments and costly WFA
+    # reconstruction on real data). mc=16 is the bootstrap warm-up.
     for cm in edit-distance diagonal-distance; do
         for mc in $MC_LIST; do
-            # diagonal-distance only uses mc=32
-            [[ "$cm" == "diagonal-distance" && "$mc" != "32" ]] && continue
+            [ "$cm" = "diagonal-distance" ] && [ "$mc" -gt 64 ] && continue
             run_benchmark_real "primates" "$input_paf" "$PRIMATES_SEQS" "$cm" "$dir_base" "$cigzip" "$TMP_DIR" "$mc"
         done
     done
+    # FL-TP (fastga): trace spacings $FASTGA_MC_LIST (fastga scaling, like EB/DB-TP). Reconstructs under the same
+    # dual gap-affine model as EB/DB-TP (see run_benchmark_real), so it is a full Table 2 entry.
+    #for fl_mc in $FASTGA_MC_LIST; do
+    #    run_benchmark_real "primates" "$input_paf" "$PRIMATES_SEQS" "fastga" "$dir_base" "$cigzip" "$TMP_DIR" "$fl_mc"
+    #done
     rm -f "$input_paf"
 done
 # Merge Primates results
