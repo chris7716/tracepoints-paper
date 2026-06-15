@@ -51,7 +51,7 @@ df_delta <- data %>%
       ),
       levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")
     ),
-    error_label = factor(paste0(e * 100, "%"), levels = c("1%", "10%", "20%")),
+    error_label = factor(paste0(e * 100, "%"), levels = c("0.1%", "1%", "10%", "20%")),
     delta_label = factor(paste0("t=", mc), levels = c("t=32", "t=64", "t=128", "t=256", "t=512", "t=1024"))
   )
 
@@ -100,7 +100,7 @@ df_tp_counts <- data %>%
       ),
       levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")
     ),
-    error_label = factor(paste0(e * 100, "%"), levels = c("1%", "10%", "20%"))
+    error_label = factor(paste0(e * 100, "%"), levels = c("0.1%", "1%", "10%", "20%"))
   )
 
 p_tp_counts <- ggplot(df_tp_counts, aes(x = error_label, y = num_tracepoints, fill = method)) +
@@ -231,7 +231,7 @@ df_sizes <- data %>%
       case_when(l == 100 ~ "100 bp", l == 1000 ~ "1 Kbp",
                 l == 10000 ~ "10 Kbp", l == 100000 ~ "100 Kbp"),
       levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")),
-    error_label = factor(paste0(e * 100, "%"), levels = c("1%", "10%", "20%"))
+    error_label = factor(paste0(e * 100, "%"), levels = c("0.1%", "1%", "10%", "20%"))
   )
 
 fltp_s <- df_sizes %>% filter(method == "FL-TP") %>%

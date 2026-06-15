@@ -36,7 +36,7 @@ df <- df %>%
     ),
     error_label = factor(
       paste0(e * 100, "%"),
-      levels = c("1%", "5%", "10%", "20%")
+      levels = c("0.1%", "1%", "5%", "10%", "20%")
     )
   )
 
@@ -128,11 +128,11 @@ p_3r_row1 <- ggplot(plot_long_3r_row1, aes(x = error_label, y = ratio, fill = fo
 # so small tracepoint ratios are legible, while BGZIP/FL-TP bars (up to ~0.3)
 # remain visible above the break.
 low_max <- 0.05
-high_max <- 0.30
-low_visual_end <- 0.18
-gap_visual <- 0.01
+high_max <- 0.80     # 0.1% pushes FL-TP up to ~0.73 (CIGAR is trivially compressible at low error)
+low_visual_end <- 0.40
+gap_visual <- 0.02
 high_visual_start <- low_visual_end + gap_visual
-high_visual_end <- 0.30
+high_visual_end <- 1.00
 low_scale <- low_visual_end / low_max
 high_scale <- (high_visual_end - high_visual_start) / (high_max - low_max)
 transform_y <- function(y) {
@@ -147,7 +147,7 @@ break_data <- data.frame(length_label = factor(c("10 Kbp", "100 Kbp"),
   levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")))
 
 low_ticks <- seq(0, low_max, by = 0.01)
-high_ticks <- c(0.1, 0.2, 0.3)
+high_ticks <- c(0.2, 0.4, 0.6, 0.8)
 breaks_r2 <- c(transform_y(low_ticks), transform_y(high_ticks))
 labels_r2 <- c(sprintf("%.2f", low_ticks), sprintf("%.1f", high_ticks))
 
@@ -208,7 +208,7 @@ df_runtime <- data %>%
       ),
       levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")
     ),
-    error_label = factor(paste0(e * 100, "%"), levels = c("1%", "10%", "20%"))
+    error_label = factor(paste0(e * 100, "%"), levels = c("0.1%", "1%", "10%", "20%"))
   )
 
 method_levels <- c("ORIGINAL", "CG BGZIP", "FL-TP", "EB-TP", "DB-TP")

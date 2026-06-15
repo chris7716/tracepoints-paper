@@ -76,7 +76,7 @@ TMP_DIR="$scratch_dir/benchmark_tmp"
 
 # Precompute CIGAR sizes (fast, run sequentially)
 for l in 100 1000 10000 100000; do
-  for e in 0.01 0.05 0.10 0.20; do
+  for e in 0.001 0.01 0.05 0.10 0.20; do
     l_nodot=$(echo $l | sed 's/\.//g')
     e_nodot=$(echo $e | sed 's/\.//g')
     prefix=set_${l_nodot}_${e_nodot}
@@ -227,7 +227,8 @@ run_benchmark() {
         num_repeats=1
     fi
 
-    # Use unique scratch directory per job
+    # Use unique scratch directory per job.
+    [ -n "${scratch_dir:-}" ] || scratch_dir=$(dirname "$TMP_DIR")
     job_scratch="$scratch_dir/jobs/$full_prefix"
     mkdir -p "$job_scratch"
     
@@ -763,6 +764,9 @@ run_benchmark_real() {
     fi
     dist_args="--distance gap-affine2p --penalties 5,8,2,24,1"
 
+    mem_mode="high"
+    # [ "$cm" = "diagonal-distance" ] && [ "$MC" -gt 64 ] && mem_mode="low"
+
     # --- ENCODE ---
     \time -v $cigzip encode \
         --paf "$input_paf" \
@@ -825,7 +829,7 @@ run_benchmark_real() {
         $cm_args \
         --max-complexity $MC \
         $dist_args \
-        --memory-mode high \
+        --memory-mode $mem_mode \
         -t $(nproc) \
         > "$decode_paf" 2> "$decode_log"
 
@@ -951,11 +955,9 @@ for paf in $HPRCV2_PAFS/*.paf.gz; do
     cp "$paf" "$scratch_paf"
     zcat "$scratch_paf" > "$input_paf"
     rm -f "$scratch_paf"
-    # EB-TP runs the full sweep; DB-TP is capped at mc<=64 (larger b gives very large segments and costly WFA
-    # reconstruction on real data). mc=16 is the bootstrap warm-up.
+    # EB-TP and DB-TP across the full sweep (mc=16 is the bootstrap warm-up).
     for cm in edit-distance diagonal-distance; do
         for mc in $MC_LIST; do
-            [ "$cm" = "diagonal-distance" ] && [ "$mc" -gt 64 ] && continue
             run_benchmark_real "hprcv2-25k" "$input_paf" "$HPRCV2_SEQS" "$cm" "$dir_base" "$cigzip" "$TMP_DIR" "$mc"
         done
     done
@@ -992,11 +994,9 @@ for paf in $PRIMATES_PAFS/*.paf.gz; do
     cp "$paf" "$scratch_paf"
     zcat "$scratch_paf" > "$input_paf"
     rm -f "$scratch_paf"
-    # EB-TP runs the full sweep; DB-TP is capped at mc<=64 (larger b gives very large segments and costly WFA
-    # reconstruction on real data). mc=16 is the bootstrap warm-up.
+    # EB-TP and DB-TP across the full sweep (mc=16 is the bootstrap warm-up).
     for cm in edit-distance diagonal-distance; do
         for mc in $MC_LIST; do
-            [ "$cm" = "diagonal-distance" ] && [ "$mc" -gt 64 ] && continue
             run_benchmark_real "primates" "$input_paf" "$PRIMATES_SEQS" "$cm" "$dir_base" "$cigzip" "$TMP_DIR" "$mc"
         done
     done
