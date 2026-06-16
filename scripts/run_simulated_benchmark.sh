@@ -34,6 +34,10 @@ align_benchmark="${ALIGN_BENCHMARK:-/moosefs/guarracino/git/WFA2-lib/bin/align_b
 out_to_paf="${OUT_TO_PAF:-$dir_base/scripts/out-to-paf.py}"
 pafcheck="${PAFCHECK:-/moosefs/guarracino/git/pafcheck/target/release/pafcheck}"
 cigzip="${CIGZIP:-$scratch_dir/cigzip/target/release/cigzip}"
+fastga_dir="${FASTGA_DIR:-/home/hasitha/data/projects/FASTGA}"
+paftoaln="$fastga_dir/PAFtoALN"
+alnvtopaf="$fastga_dir/ALNtoPAF"
+oneview="$fastga_dir/ONEview"
 
 # Benchmark parameters
 NUM_RECORDS="${NUM_RECORDS:-10000}"
@@ -505,6 +509,215 @@ run_benchmark() {
 }
 
 # =============================================================================
+# STEP 3b: FASTGA PAFtoALN (.1aln) BENCHMARK
+# =============================================================================
+
+run_fastga_aln_benchmark() {
+    log "Starting FASTGA PAFtoALN (.1aln) benchmark..."
+
+    check_tool "PAFtoALN" "$paftoaln"
+    check_tool "ALNtoPAF" "$alnvtopaf"
+    check_tool "ONEview"  "$oneview"
+
+    mkdir -p "$dir_base/simulated-data"/{encode,decode}
+    mkdir -p "$scratch_dir/benchmark_tmp"
+    mkdir -p "$scratch_dir/jobs"
+
+    REPORT_1ALN="$dir_base/simulated-data/benchmark.results.fastga-1aln.tsv"
+    TMP_DIR="$scratch_dir/benchmark_tmp"
+
+    # -------------------------------------------------------------------------
+    # Precompute CIGAR sizes and baseline alignment times
+    # -------------------------------------------------------------------------
+    log "Precomputing CIGAR sizes and baseline times..."
+
+    > "$TMP_DIR/cigar_sizes.txt"
+
+    for l in 100 1000 10000 100000; do
+        for e in 0.001 0.01 0.05 0.10 0.20; do
+            l_nodot=$(echo $l | sed 's/\.//g')
+            e_nodot=$(echo $e | sed 's/\.//g')
+            prefix=set_${l_nodot}_${e_nodot}
+            input_paf="$dir_base/simulated-data/alns/$prefix.paf"
+
+            log "Processing baseline: $prefix"
+
+            size_cigar=$(awk -F'\t' '{
+                out = $1
+                for (i = 2; i <= 12; i++) out = out "\t" $i
+                for (i = 13; i <= NF; i++) {
+                    if ($i ~ /^cg:Z:/) { out = out "\t" $i; break }
+                }
+                print out
+            }' "$input_paf" | wc -c)
+
+            if [ "$size_cigar" -le 1 ]; then
+                echo "ERROR: cg:Z: tag not found in $input_paf" >&2
+                exit 1
+            fi
+
+            bgzip_file="$dir_base/simulated-data/compress/$prefix.cigar.paf.gz"
+            if [ -f "$bgzip_file" ]; then
+                size_cigar_bgzip=$(wc -c < "$bgzip_file")
+            else
+                mkdir -p "$dir_base/simulated-data/compress"
+                awk -F'\t' '{
+                    out = $1
+                    for (i = 2; i <= 12; i++) out = out "\t" $i
+                    for (i = 13; i <= NF; i++) {
+                        if ($i ~ /^cg:Z:/) { out = out "\t" $i; break }
+                    }
+                    print out
+                }' "$input_paf" | bgzip -l9 -c > "$bgzip_file"
+                size_cigar_bgzip=$(wc -c < "$bgzip_file")
+            fi
+
+            bgzip_decomp_log="$TMP_DIR/$prefix.bgzip_decompress.log"
+            \time -v bgzip -d -@ "$THREADS" -c "$bgzip_file" > /dev/null 2> "$bgzip_decomp_log"
+            bgzip_decomp_runtime=$(parse_time_log "$bgzip_decomp_log")
+            bgzip_decomp_memory=$(parse_memory_log "$bgzip_decomp_log")
+
+            baseline_tp_paf="$TMP_DIR/$prefix.baseline.tp.paf"
+            baseline_decode_paf="$TMP_DIR/$prefix.baseline.decoded.paf"
+            baseline_log="$TMP_DIR/$prefix.baseline.log"
+
+            check_tool "cigzip" "$cigzip"
+            "$cigzip" encode \
+                --paf "$input_paf" \
+                --type standard \
+                --complexity-metric edit-distance \
+                --max-complexity 9999999 \
+                > "$baseline_tp_paf"
+
+            \time -v "$cigzip" decode \
+                --paf "$baseline_tp_paf" \
+                --sequence-files "$dir_base/simulated-data/seqs/$prefix.fa" \
+                --type standard \
+                --complexity-metric edit-distance \
+                --max-complexity 9999999 \
+                --distance edit \
+                --memory-mode high \
+                -t "$THREADS" \
+                > "$baseline_decode_paf" 2> "$baseline_log"
+
+            align_runtime=$(parse_time_log "$baseline_log")
+            align_memory=$(parse_memory_log "$baseline_log")
+            rm -f "$baseline_tp_paf" "$baseline_decode_paf" "$baseline_log" "$bgzip_decomp_log"
+
+            echo "${l}_${e} $size_cigar $size_cigar_bgzip $bgzip_decomp_runtime $bgzip_decomp_memory $align_runtime $align_memory" >> "$TMP_DIR/cigar_sizes.txt"
+        done
+    done
+
+    # -------------------------------------------------------------------------
+    # Run PAFtoALN / ALNtoPAF benchmarks
+    # -------------------------------------------------------------------------
+    log "Running PAFtoALN / ALNtoPAF benchmarks..."
+
+    for l in 100 1000 10000 100000; do
+        for e in 0.001 0.01 0.05 0.10 0.20; do
+            l_nodot=$(echo $l | sed 's/\.//g')
+            e_nodot=$(echo $e | sed 's/\.//g')
+            prefix=set_${l_nodot}_${e_nodot}
+            input_paf="$dir_base/simulated-data/alns/$prefix.paf"
+            seq_file="$dir_base/simulated-data/seqs/$prefix.fa"
+
+            tp_type="fastga-1aln"
+            cm="none"
+            mc=100
+            memory_mode="high"
+            num_repeats=10
+
+            prefix2="$tp_type.$cm.$mc.$memory_mode"
+            full_prefix="$prefix.$prefix2"
+
+            log "Benchmarking: $full_prefix"
+
+            size_cigar=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f2)
+            size_cigar_bgzip=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f3)
+            bgzip_decomp_runtime=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f4)
+            bgzip_decomp_memory=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f5)
+            align_runtime=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f6)
+            align_memory=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f7)
+
+            job_scratch="$scratch_dir/jobs/$full_prefix"
+            mkdir -p "$job_scratch"
+
+            paf_copy="$job_scratch/input.paf"
+            aln_file="$job_scratch/input.1aln"
+            decode_paf="$job_scratch/$full_prefix.paf"
+            encode_log="$job_scratch/$full_prefix.encode.log"
+            decode_log="$job_scratch/$full_prefix.decode.log"
+
+            cp "$input_paf" "$paf_copy"
+
+            # --- ENCODE: PAFtoALN ---
+            encode_runtime_sum=0
+            encode_memory_sum=0
+            for _rep in $(seq 1 $num_repeats); do
+                rm -f "$aln_file"
+                \time -v "$paftoaln" "$paf_copy" "$seq_file" 2> "$encode_log" || true
+                _rep_runtime=$(parse_time_log "$encode_log")
+                _rep_memory=$(parse_memory_log "$encode_log")
+                encode_runtime_sum=$(echo "$encode_runtime_sum + $_rep_runtime" | bc -l)
+                encode_memory_sum=$((encode_memory_sum + _rep_memory))
+            done
+            encode_runtime=$(echo "scale=6; $encode_runtime_sum / $num_repeats" | bc -l | sed 's/^\./0./')
+            encode_memory=$((encode_memory_sum / num_repeats))
+
+            if [[ ! -f "$aln_file" ]]; then
+                log "  SKIP – PAFtoALN failed for $full_prefix"
+                rm -rf "$job_scratch"
+                continue
+            fi
+
+            size_tp=$(wc -c < "$aln_file")
+
+            num_tps=$("$oneview" -t aln "$aln_file" 2>/dev/null | \
+                awk '$1=="T" { sum += $2 } END { print sum+0 }')
+
+            # --- DECODE: ALNtoPAF (reads .1aln directly, no decompress step) ---
+            decode_runtime_sum=0
+            decode_memory_sum=0
+            for _rep in $(seq 1 $num_repeats); do
+                \time -v "$alnvtopaf" "$aln_file" > "$decode_paf" 2> "$decode_log"
+                _rep_runtime=$(parse_time_log "$decode_log")
+                _rep_memory=$(parse_memory_log "$decode_log")
+                decode_runtime_sum=$(echo "$decode_runtime_sum + $_rep_runtime" | bc -l)
+                decode_memory_sum=$((decode_memory_sum + _rep_memory))
+            done
+            decode_runtime=$(echo "scale=6; $decode_runtime_sum / $num_repeats" | bc -l | sed 's/^\./0./')
+            decode_memory=$((decode_memory_sum / num_repeats))
+
+            # Write result (compress/decompress columns set to 0 — not applicable)
+            echo -e "$l\t$e\t$tp_type\t$cm\t$mc\t$memory_mode\t$size_cigar\t$size_cigar_bgzip\t$bgzip_decomp_runtime\t$bgzip_decomp_memory\t$align_runtime\t$align_memory\t$size_tp\t$num_tps\t$encode_runtime\t$encode_memory\t0\t0\t0\t0\t0\tN/A\t$decode_runtime\t$decode_memory\t$decode_runtime\t$decode_memory" \
+                > "$TMP_DIR/$full_prefix.result.tsv"
+
+            [ -f "$aln_file" ]   && mv "$aln_file"   "$dir_base/simulated-data/encode/$full_prefix.1aln"
+            [ -f "$encode_log" ] && mv "$encode_log"  "$dir_base/simulated-data/encode/$full_prefix.log"
+            [ -f "$decode_paf" ] && mv "$decode_paf"  "$dir_base/simulated-data/decode/$full_prefix.paf"
+            [ -f "$decode_log" ] && mv "$decode_log"  "$dir_base/simulated-data/decode/$full_prefix.log"
+
+            rm -f "$paf_copy"
+            rmdir "$job_scratch" 2>/dev/null || true
+        done
+    done
+
+    # -------------------------------------------------------------------------
+    # Merge results
+    # -------------------------------------------------------------------------
+    log "Merging results..."
+
+    echo -e "l\te\ttp_type\tcm\tmc\tmemory_mode\tsize_cigar_bytes\tsize_cigar_bgzip_bytes\tbgzip_decompress_runtime_sec\tbgzip_decompress_memory_kb\talign_runtime_sec\talign_memory_kb\tsize_tp_bytes\tnum_tracepoints\tencode_runtime_sec\tencode_memory_kb\tsize_tpa_bytes\tcompress_runtime_sec\tcompress_memory_kb\tdecompress_runtime_sec\tdecompress_memory_kb\tdecompress_correct\tdecode_runtime_sec\tdecode_memory_kb\tdecode_heuristic_runtime_sec\tdecode_heuristic_memory_kb" > "$REPORT_1ALN"
+
+    cat "$TMP_DIR"/*.result.tsv | sort -t$'\t' -k1,1n -k2,2n >> "$REPORT_1ALN"
+
+    rm -rf "$TMP_DIR"
+    rm -rf "$scratch_dir/jobs"
+
+    log "FASTGA benchmark complete! Results in: $REPORT_1ALN"
+}
+
+# =============================================================================
 # STEP 4: GENERATE PLOTS
 # =============================================================================
 
@@ -539,6 +752,7 @@ generate_plots() {
 main() {
     local run_generate=false
     local run_benchmark=false
+    local run_benchmark_fastga=false
     local run_plot=false
 
     # Parse arguments
@@ -556,17 +770,21 @@ main() {
                 --benchmark)
                     run_benchmark=true
                     ;;
+                --benchmark-fastga)
+                    run_benchmark_fastga=true
+                    ;;
                 --plot)
                     run_plot=true
                     ;;
                 --help|-h)
-                    echo "Usage: $0 [--generate] [--benchmark] [--plot]"
+                    echo "Usage: $0 [--generate] [--benchmark] [--benchmark-fastga] [--plot]"
                     echo ""
                     echo "Options:"
-                    echo "  --generate   Run sequence generation and alignment"
-                    echo "  --benchmark  Run the full benchmark pipeline"
-                    echo "  --plot       Generate plots from results"
-                    echo "  (no args)    Run all steps"
+                    echo "  --generate           Run sequence generation and alignment"
+                    echo "  --benchmark          Run the cigzip benchmark pipeline"
+                    echo "  --benchmark-fastga   Run the FASTGA PAFtoALN (.1aln) benchmark"
+                    echo "  --plot               Generate plots from results"
+                    echo "  (no args)            Run all steps (generate + benchmark + plot)"
                     echo ""
                     echo "Environment variables for configuration:"
                     echo "  DIR_BASE          Base output directory"
@@ -576,6 +794,7 @@ main() {
                     echo "  OUT_TO_PAF        Path to out-to-paf.py script"
                     echo "  PAFCHECK          Path to pafcheck binary"
                     echo "  CIGZIP            Path to cigzip binary"
+                    echo "  FASTGA_DIR        Path to FASTGA tools directory (PAFtoALN, ALNtoPAF, ONEview)"
                     echo "  NUM_RECORDS       Number of sequence pairs (default: 10000)"
                     echo "  THREADS           Number of threads (default: nproc)"
                     exit 0
@@ -593,6 +812,7 @@ main() {
     log "Configuration:"
     log "  DIR_BASE=$dir_base"
     log "  SCRATCH_DIR=$scratch_dir"
+    log "  FASTGA_DIR=$fastga_dir"
     log "  NUM_RECORDS=$NUM_RECORDS"
     log "  THREADS=$THREADS"
 
@@ -602,6 +822,10 @@ main() {
 
     if $run_benchmark; then
         run_benchmark
+    fi
+
+    if $run_benchmark_fastga; then
+        run_fastga_aln_benchmark
     fi
 
     if $run_plot; then
