@@ -518,6 +518,7 @@ run_fastga_aln_benchmark() {
     check_tool "PAFtoALN" "$paftoaln"
     check_tool "ALNtoPAF" "$alnvtopaf"
     check_tool "ONEview"  "$oneview"
+    check_tool "cigzip"   "$cigzip"
 
     mkdir -p "$dir_base/simulated-data"/{encode,decode}
     mkdir -p "$scratch_dir/benchmark_tmp"
@@ -581,7 +582,6 @@ run_fastga_aln_benchmark() {
             baseline_decode_paf="$TMP_DIR/$prefix.baseline.decoded.paf"
             baseline_log="$TMP_DIR/$prefix.baseline.log"
 
-            check_tool "cigzip" "$cigzip"
             "$cigzip" encode \
                 --paf "$input_paf" \
                 --type standard \
@@ -632,12 +632,17 @@ run_fastga_aln_benchmark() {
 
             log "Benchmarking: $full_prefix"
 
-            size_cigar=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f2)
-            size_cigar_bgzip=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f3)
-            bgzip_decomp_runtime=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f4)
-            bgzip_decomp_memory=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f5)
-            align_runtime=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f6)
-            align_memory=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f7)
+            _baseline=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" || true)
+            if [[ -z "$_baseline" ]]; then
+                log "  ERROR – baseline data not found for ${l}_${e}, skipping"
+                continue
+            fi
+            size_cigar=$(echo "$_baseline" | cut -d' ' -f2)
+            size_cigar_bgzip=$(echo "$_baseline" | cut -d' ' -f3)
+            bgzip_decomp_runtime=$(echo "$_baseline" | cut -d' ' -f4)
+            bgzip_decomp_memory=$(echo "$_baseline" | cut -d' ' -f5)
+            align_runtime=$(echo "$_baseline" | cut -d' ' -f6)
+            align_memory=$(echo "$_baseline" | cut -d' ' -f7)
 
             job_scratch="$scratch_dir/jobs/$full_prefix"
             mkdir -p "$job_scratch"
@@ -656,8 +661,8 @@ run_fastga_aln_benchmark() {
             for _rep in $(seq 1 $num_repeats); do
                 rm -f "$aln_file"
                 \time -v "$paftoaln" "$paf_copy" "$seq_file" 2> "$encode_log" || true
-                _rep_runtime=$(parse_time_log "$encode_log")
-                _rep_memory=$(parse_memory_log "$encode_log")
+                _rep_runtime=$(parse_time_log "$encode_log" || echo "0")
+                _rep_memory=$(parse_memory_log "$encode_log" || echo "0")
                 encode_runtime_sum=$(echo "$encode_runtime_sum + $_rep_runtime" | bc -l)
                 encode_memory_sum=$((encode_memory_sum + _rep_memory))
             done
@@ -669,22 +674,25 @@ run_fastga_aln_benchmark() {
                 rm -rf "$job_scratch"
                 continue
             fi
+            log "  encode done"
 
             size_tp=$(wc -c < "$aln_file")
 
             num_tps=$("$oneview" -t aln "$aln_file" 2>/dev/null | \
-                awk '$1=="T" { sum += $2 } END { print sum+0 }')
+                awk '$1=="T" { sum += $2 } END { print sum+0 }' || echo "0")
+            log "  size_tp=$size_tp  num_tps=$num_tps"
 
             # --- DECODE: ALNtoPAF (reads .1aln directly, no decompress step) ---
             decode_runtime_sum=0
             decode_memory_sum=0
             for _rep in $(seq 1 $num_repeats); do
                 \time -v "$alnvtopaf" "$aln_file" > "$decode_paf" 2> "$decode_log"
-                _rep_runtime=$(parse_time_log "$decode_log")
-                _rep_memory=$(parse_memory_log "$decode_log")
+                _rep_runtime=$(parse_time_log "$decode_log" || echo "0")
+                _rep_memory=$(parse_memory_log "$decode_log" || echo "0")
                 decode_runtime_sum=$(echo "$decode_runtime_sum + $_rep_runtime" | bc -l)
                 decode_memory_sum=$((decode_memory_sum + _rep_memory))
             done
+            log "  decode done"
             decode_runtime=$(echo "scale=6; $decode_runtime_sum / $num_repeats" | bc -l | sed 's/^\./0./')
             decode_memory=$((decode_memory_sum / num_repeats))
 
