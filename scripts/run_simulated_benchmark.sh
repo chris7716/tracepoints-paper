@@ -686,7 +686,7 @@ run_fastga_aln_benchmark() {
             decode_runtime_sum=0
             decode_memory_sum=0
             for _rep in $(seq 1 $num_repeats); do
-                \time -v "$alnvtopaf" "$aln_file" > "$decode_paf" 2> "$decode_log"
+                \time -v "$alnvtopaf" "$aln_file" > "$decode_paf" 2> "$decode_log" || true
                 _rep_runtime=$(parse_time_log "$decode_log" || echo "0")
                 _rep_memory=$(parse_memory_log "$decode_log" || echo "0")
                 decode_runtime_sum=$(echo "$decode_runtime_sum + $_rep_runtime" | bc -l)
