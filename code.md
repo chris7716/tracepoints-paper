@@ -13,11 +13,25 @@ align_benchmark=/moosefs/guarracino/git/WFA2-lib/bin/align_benchmark
 # CC=/usr/bin/gcc BUILD_EXAMPLES=0
 # LD_FLAGS='-Wl,--dynamic-linker=/lib64/ld-linux-x86-64.so.2 -Wl,-rpath,/lib/x86_64-linux-gnu'
 # make
+# To built these two on our HPC
+# unset LIBRARY_PATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH
+# CC=/usr/bin/gcc CXX=/usr/bin/g++ make BUILD_EXAMPLES=0
 
 out_to_paf=$dir_base/scripts/out-to-paf.py
 pafcheck=/moosefs/guarracino/git/pafcheck/target/release/pafcheck
 
 cigzip=$scratch_dir/cigzip/target/release/cigzip
+
+# Use tracepoints-dev branch from https://github.com/AndreaGuarracino/FASTGA.git
+fastga_bin=$scratch_dir/FASTGA
+FAtoGDB=$fastga_bin/FAtoGDB
+PAFtoALN=$fastga_bin/PAFtoALN
+ALNtoPAF=$fastga_bin/ALNtoPAF
+ONEview=$fastga_bin/ONEview
+# ALNtoPAF -x anti-scales on this input (~10000 tiny contigs): on a 96-core node
+# decode was T1=3.9s, T8=8.5s, T32=24.7s, T96=48.6s (NUMA/lock contention on the
+# shared GDB; fully cached, 0 I/O). Single-threaded is fastest, so run FASTGA at T1.
+FASTGA_THREADS=1
 ```
 
 ## Simulated data
@@ -31,7 +45,7 @@ mkdir -p $dir_base/simulated-data/seqs
 num_records=10000
 
 for l in 100 1000 10000 100000; do
-  for e in 0.01 0.05 0.10 0.20; do
+  for e in 0.001 0.01 0.05 0.10 0.20; do
     echo $l $e
     l_nodot=$(echo $l | sed 's/\.//g')
     e_nodot=$(echo $e | sed 's/\.//g')
@@ -220,8 +234,9 @@ run_benchmark() {
     # For fastga we name the rice strategy explicitly, so we must add -nocomp; otherwise an explicit strategy defaults to a zstd wrapper.
     [ "$tp_type" = "fastga" ] && strategy_args="--strategy rice-nocomp;rice-nocomp" || strategy_args=""
 
-    # Repeat 10 times for mc<=64 or fastga to get stable averages; once otherwise
-    if [ "$mc" -le 64 ] || [ "$tp_type" = "fastga" ]; then
+    # Repeat 10 times for stable averages: standard with mc<=64, or any fastga variant (fastga,
+    # fastga-native) on short sequences (l < 10k). Large fastga jobs are slow, so they run once.
+    if [ "$mc" -le 64 ] || { [[ "$tp_type" == fastga* ]] && [ "$l" -lt 10000 ]; }; then
         num_repeats=10
     else
         num_repeats=1
@@ -270,7 +285,68 @@ run_benchmark() {
     parse_memory_log() {
         grep "Maximum resident set size" "$1" | sed 's/.*: //'
     }
-    
+
+    # --- FL-TP FASTGA branch: PAFtoALN encode + ALNtoPAF -x decode (FASTGA reference impl) ---
+    # Runs in the same loop as the cigzip methods. PAFtoALN hard-codes trace spacing TSPACE=100,
+    # so this exists only at mc=100. Maps into the shared schema: .1aln size -> size_tpa_bytes,
+    # PAFtoALN -> encode, ALNtoPAF -x -> decode; compress/decompress stages are N/A (0).
+    if [ "$tp_type" = "fastga-native" ]; then
+        # Trim terminal indels (leading/trailing I/D) so every alignment ends in =/X, adjusting the
+        # q/t start-end coords. FASTGA's ALNtoPAF -x otherwise mis-reconstructs a terminal insertion
+        # (e.g. 99=1I -> invalid 99=1X that references a non-existent target base, failing pafcheck);
+        # the trimmed alignment is exactly what cigzip's FL-TP decode produces, so the two stay consistent.
+        # PAFtoALN writes <basename>.1aln next to this PAF.
+        awk 'BEGIN{FS=OFS="\t"}
+        { ci=0; for(j=13;j<=NF;j++) if($j ~ /^cg:Z:/){ci=j; break}
+          if(ci==0){print; next}
+          c=substr($ci,6); n=0; rest=c
+          while(match(rest,/^[0-9]+[=XID]/)){ t=substr(rest,RSTART,RLENGTH); n++;
+            L[n]=substr(t,1,length(t)-1)+0; O[n]=substr(t,length(t),1); rest=substr(rest,RLENGTH+1) }
+          qs=$3; qe=$4; ts=$8; te=$9; lo=1; hi=n
+          while(lo<=hi && (O[lo]=="I"||O[lo]=="D")){ if(O[lo]=="I") qs+=L[lo]; else ts+=L[lo]; lo++ }
+          while(hi>=lo && (O[hi]=="I"||O[hi]=="D")){ if(O[hi]=="I") qe-=L[hi]; else te-=L[hi]; hi-- }
+          nc=""; for(k=lo;k<=hi;k++) nc=nc L[k] O[k]
+          $3=qs; $4=qe; $8=ts; $9=te; $ci="cg:Z:" nc
+          delete L; delete O; print }' "$input_paf" > "$job_scratch/$prefix.paf"
+        $FAtoGDB "$seq_file" "$job_scratch/$prefix.1gdb" > "$job_scratch/gdb.log" 2>&1
+
+        # encode (PAFtoALN); both sources are the single .fa GDB, so all names resolve
+        enc_rt_sum=0; enc_mem_sum=0
+        for _rep in $(seq 1 $num_repeats); do
+            rm -f "$job_scratch/$prefix.1aln"
+            \time -v $PAFtoALN -T$FASTGA_THREADS "$job_scratch/$prefix.paf" "$job_scratch/$prefix.1gdb" "$job_scratch/$prefix.1gdb" \
+                > /dev/null 2> "$encode_log"
+            enc_rt_sum=$(echo "$enc_rt_sum + $(parse_time_log "$encode_log")" | bc -l)
+            enc_mem_sum=$((enc_mem_sum + $(parse_memory_log "$encode_log")))
+        done
+        encode_runtime=$(echo "scale=6; $enc_rt_sum / $num_repeats" | bc -l | sed 's/^\./0./')
+        encode_memory=$((enc_mem_sum / num_repeats))
+        size_1aln=$(wc -c < "$job_scratch/$prefix.1aln")
+        # number of tracepoints in the .1aln: sum of the per-alignment trace-point list lengths
+        # (each 'T' line's count). A pure-match alignment is one (0,0) tracepoint, matching cigzip.
+        num_1aln_tp=$($ONEview "$job_scratch/$prefix.1aln" 2>/dev/null | awk '$1=="T"{s+=$2} END{print s+0}')
+
+        # decode (ALNtoPAF -x reconstructs the optimal X/= CIGAR)
+        dec_rt_sum=0; dec_mem_sum=0
+        for _rep in $(seq 1 $num_repeats); do
+            \time -v $ALNtoPAF -x -T$FASTGA_THREADS "$job_scratch/$prefix.1aln" > "$decode_paf" 2> "$decode_log"
+            dec_rt_sum=$(echo "$dec_rt_sum + $(parse_time_log "$decode_log")" | bc -l)
+            dec_mem_sum=$((dec_mem_sum + $(parse_memory_log "$decode_log")))
+        done
+        decode_runtime=$(echo "scale=6; $dec_rt_sum / $num_repeats" | bc -l | sed 's/^\./0./')
+        decode_memory=$((dec_mem_sum / num_repeats))
+
+        # correctness: every record preserved AND reconstructed CIGAR consistent with sequences
+        n_in=$(grep -c . "$job_scratch/$prefix.paf"); n_out=$(grep -c . "$decode_paf")
+        correct="false"
+        [ "$n_in" = "$n_out" ] && $pafcheck --paf "$decode_paf" --sequence-files "$seq_file" --threads $(nproc) > /dev/null 2>&1 && correct="true"
+
+        echo -e "$l\t$e\t$tp_type\t$cm\t$mc\t$memory_mode\t$size_cigar\t$size_cigar_bgzip\t$bgzip_decomp_runtime\t$bgzip_decomp_memory\t$align_runtime\t$align_memory\t0\t$num_1aln_tp\t$encode_runtime\t$encode_memory\t$size_1aln\t0\t0\t0\t0\t$correct\t$decode_runtime\t$decode_memory\t$decode_runtime\t$decode_memory" > "$TMP_DIR/$full_prefix.result.tsv"
+        rm -f "$job_scratch/$prefix.paf" "$job_scratch/$prefix.1aln" "$decode_paf"
+        echo "Completed: $full_prefix"
+        return
+    fi
+
     # --- ENCODE ---
     encode_runtime_sum=0
     encode_memory_sum=0
@@ -404,11 +480,13 @@ run_benchmark() {
 }
 
 export -f run_benchmark
+export scratch_dir   # parallel-spawned workers need this in their environment (job_scratch uses it)
+export FAtoGDB PAFtoALN ALNtoPAF ONEview pafcheck FASTGA_THREADS   # used by the fastga-native (FL-TP FASTGA) branch
 
 # Generate all job parameters
 > "$TMP_DIR/jobs.txt"
 for l in 100 1000 10000 100000; do
-  for e in 0.01 0.05 0.10 0.20; do
+  for e in 0.001 0.01 0.05 0.10 0.20; do
     # Look up precomputed values
     size_cigar=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f2)
     size_cigar_bgzip=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f3)
@@ -417,8 +495,16 @@ for l in 100 1000 10000 100000; do
     align_runtime=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f6)
     align_memory=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f7)
 
-    for tp_type in fastga standard; do
+    # Per-condition bootstrap warm-up
+    echo "$l $e standard edit-distance 16 high $dir_base $cigzip $size_cigar $size_cigar_bgzip $bgzip_decomp_runtime $bgzip_decomp_memory $align_runtime $align_memory $TMP_DIR" >> "$TMP_DIR/jobs.txt"
+
+    # "FL-TP" = cigzip fastga across trace spacings (l); "FL-TP FASTGA" = PAFtoALN/ALNtoPAF, l=100
+    # only (handled by the fastga-native branch in run_benchmark). EB-TP/DB-TP sweep delta/b 32..1024.
+    for tp_type in fastga fastga-native standard; do
       if [ "$tp_type" = "fastga" ]; then
+          cm_list="none"
+          mc_list="100 200 300 500 1000 2000"
+      elif [ "$tp_type" = "fastga-native" ]; then
           cm_list="none"
           mc_list="100"
       else
@@ -670,6 +756,7 @@ Real data - PAF CIGAR -> PAF TRACEPOINTS -> TPA -> PAF TRACEPOINTS -> PAF CIGAR:
 
 # Benchmark parameters
 MC_LIST="16 32 64 128 256"      # EB-TP/DB-TP max-complexity values (16 = bootstrap warm-up, excluded from reporting)
+#MC_LIST="16 80 96"      # EB-TP/DB-TP max-complexity values (16 = bootstrap warm-up, excluded from reporting)
 FASTGA_MC_LIST="500 1000 2000"  # FL-TP trace spacings (fastga scaling)
 TMP_DIR="$scratch_dir/real_benchmark_tmp"
 mkdir -p $TMP_DIR
@@ -1073,6 +1160,16 @@ Supplementary figures S1-S3 (delta effect, tracepoint counts, score distribution
 #         figS3_score_distributions.png/.pdf
 # Deps:   tidyverse, ggplot2, patchwork, cowplot, ggh4x
 Rscript scripts/plotting/plot-supp-figures.R
+```
+
+Space-time tradeoff (stored size vs reconstruction time, all methods across their parameter sweeps):
+
+```shell
+# Input:  data/simulated-data/benchmark.results.tsv
+#   FL-TP (fastga l 100..2000), FL-TP FASTGA (fastga-native l=100), EB-TP/DB-TP (32..1024)
+# Output: space_time_tradeoff.png/.pdf
+# Deps:   tidyverse, ggplot2, scales
+Rscript scripts/plotting/plot-tradeoff.R
 ```
 
 Supplementary figure S4 (primate pangenome performance across 16 targets):
