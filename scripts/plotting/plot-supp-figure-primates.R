@@ -35,8 +35,8 @@ df <- data %>%
     ),
     # Method label (includes threshold parameter)
     method = case_when(
-      cm == "edit-distance" ~ paste0("EB-TP (\u03b4=", mc, ")"),
-      cm == "diagonal-distance" ~ paste0("DB-TP (b=", mc, ")")
+      cm == "edit-distance" ~ paste0("EB-TP TPA (\u03b4=", mc, ")"),
+      cm == "diagonal-distance" ~ paste0("DB-TP TPA (b=", mc, ")")
     ),
     # Compute metrics
     tpa_size_mb = size_tpa_bytes / 1e6,
@@ -68,8 +68,8 @@ df <- df %>%
     target = factor(target, levels = target_order),
     target_label = factor(target_labels[as.character(target)], levels = target_labels),
     method = factor(method, levels = c(
-      "EB-TP (\u03b4=32)", "EB-TP (\u03b4=64)", "EB-TP (\u03b4=128)",
-      "DB-TP (b=32)"
+      "EB-TP TPA (\u03b4=32)", "EB-TP TPA (\u03b4=64)", "EB-TP TPA (\u03b4=128)",
+      "DB-TP TPA (b=32)"
     )),
     species = factor(species, levels = c("Human", "Chimpanzee", "Bonobo", "Gorilla", "B. Orangutan", "S. Orangutan", "Siamang"))
   )
@@ -81,7 +81,7 @@ common_theme <- theme_bw(base_size = 15) +
     legend.title = element_text(size = 14, face = "bold"),
     legend.text = element_text(size = 13),
     axis.text.x = element_text(size = 10, angle = 45, hjust = 1),
-    axis.text.y = element_text(size = 14),
+    axis.text.y = element_text(size = 13),
     axis.title = element_text(size = 15, face = "bold"),
     strip.text = element_text(size = 15, face = "bold"),
     panel.grid.minor = element_blank(),
@@ -92,8 +92,8 @@ common_theme <- theme_bw(base_size = 15) +
 # Color scale: warm gradient for EB-TP, cool gradient for DB-TP
 color_scale <- scale_fill_manual(
   values = c(
-    "EB-TP (\u03b4=32)" = "#d95f02", "EB-TP (\u03b4=64)" = "#e6950a", "EB-TP (\u03b4=128)" = "#f0c050",
-    "DB-TP (b=32)" = "#1b5e9b"
+    "EB-TP TPA (\u03b4=32)" = "#d95f02", "EB-TP TPA (\u03b4=64)" = "#e6950a", "EB-TP TPA (\u03b4=128)" = "#f0c050",
+    "DB-TP TPA (b=32)" = "#1b5e9b"
   ),
   name = "Method"
 )

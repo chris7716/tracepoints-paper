@@ -19,8 +19,8 @@ common_theme <- theme_bw(base_size = 15) +
     legend.position = "bottom",
     legend.title = element_text(size = 14, face = "bold"),
     legend.text = element_text(size = 13),
-    axis.text.x = element_text(size = 14),
-    axis.text.y = element_text(size = 14),
+    axis.text.x = element_text(size = 13),
+    axis.text.y = element_text(size = 13),
     axis.title = element_text(size = 15, face = "bold"),
     strip.text = element_text(size = 15, face = "bold"),
     plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
@@ -34,14 +34,33 @@ common_theme <- theme_bw(base_size = 15) +
 # Figure S1: Effect of δ parameter on compression ratio
 # =============================================================================
 
+# Parameter sweeps: EB-TP/DB-TP vary the threshold (delta, b); FL-TP varies the
+# trace spacing l. The value sets differ, so the two are given SEPARATE fill
+# scales (and legends) via ggnewscale
+library(ggnewscale)
+
+delta_levels  <- c(32, 64, 128, 256, 512, 1024)     # EB-TP (delta), DB-TP (b)
+fastga_levels <- c(100, 200, 300, 500, 1000, 2000)  # FL-TP (trace spacing l)
+threshold_cols <- setNames(c("#9ecae1", "#4292c6", "#08519c",
+                             "#253494", "#6a017a", "#2d004b"), as.character(delta_levels))
+length_cols    <- setNames(c("#fdd0a2", "#fdae6b", "#fd8d3c",
+                             "#f16913", "#d94801", "#7f2704"), as.character(fastga_levels))
+
 df_delta <- data %>%
   filter(memory_mode == "high") %>%
-  filter(tp_type == "standard") %>%
-  filter(mc %in% c(32, 64, 128, 256, 512, 1024)) %>%
-  filter(e != 0.05) %>%
+  filter((tp_type == "standard" & mc %in% delta_levels) |
+         (tp_type == "fastga"   & mc %in% fastga_levels)) %>%
+  filter(e %in% c(0.001, 0.01, 0.05, 0.10, 0.20)) %>%
   mutate(
     ratio_tpa = size_tpa_bytes / size_cigar_bytes,
-    method = factor(ifelse(cm == "edit-distance", "EB-TP", "DB-TP"), levels = c("EB-TP", "DB-TP")),
+    method = factor(
+      case_when(
+        tp_type == "fastga" ~ "FL-TP TPA",
+        cm == "edit-distance" ~ "EB-TP TPA",
+        cm == "diagonal-distance" ~ "DB-TP TPA"
+      ),
+      levels = c("FL-TP TPA", "EB-TP TPA", "DB-TP TPA")
+    ),
     length_label = factor(
       case_when(
         l == 100 ~ "100 bp",
@@ -51,26 +70,41 @@ df_delta <- data %>%
       ),
       levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")
     ),
-    error_label = factor(paste0(e * 100, "%"), levels = c("0.1%", "1%", "10%", "20%")),
-    delta_label = factor(paste0("t=", mc), levels = c("t=32", "t=64", "t=128", "t=256", "t=512", "t=1024"))
+    error_label = factor(paste0(e * 100, "%"), levels = c("0.1%", "1%", "5%", "10%", "20%")),
+    threshold_label = factor(as.character(mc), levels = as.character(delta_levels)),
+    spacing_label   = factor(as.character(mc), levels = as.character(fastga_levels))
   )
 
-p_delta <- ggplot(df_delta, aes(x = error_label, y = ratio_tpa, fill = delta_label)) +
-  geom_bar(stat = "identity", position = position_dodge(width = 0.9), width = 0.78) +
+df_fltp <- df_delta %>% filter(method == "FL-TP TPA")
+df_ebdb <- df_delta %>% filter(method != "FL-TP TPA")
+
+p_delta <- ggplot() +
+  # FL-TP: trace spacing l -> "Length" legend (orange palette)
+  geom_bar(data = df_fltp, aes(x = error_label, y = ratio_tpa, fill = spacing_label),
+           stat = "identity", position = position_dodge(width = 0.9), width = 0.78) +
+  scale_fill_manual(values = length_cols, name = "Length (l)",
+                    guide = guide_legend(order = 1, nrow = 1)) +
+  new_scale_fill() +
+  # EB-TP / DB-TP: threshold delta, b -> "Threshold" legend (blue-purple palette)
+  geom_bar(data = df_ebdb, aes(x = error_label, y = ratio_tpa, fill = threshold_label),
+           stat = "identity", position = position_dodge(width = 0.9), width = 0.78) +
+  scale_fill_manual(values = threshold_cols, name = "Threshold (t)",
+                    guide = guide_legend(order = 2, nrow = 1)) +
   facet_grid2(method ~ length_label, scales = "free_y", independent = "y") +
-  scale_fill_manual(values = c("t=32" = "#9ecae1", "t=64" = "#4292c6", "t=128" = "#08519c",
-                               "t=256" = "#253494", "t=512" = "#6a017a", "t=1024" = "#2d004b"),
-                    name = "Threshold") +
-  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+  # Denser y ticks: ~0.1 on the large-range panels, finer on the small ones
+  # (free_y panels range from ~0.08 to ~0.7, so a fixed 0.1 step would leave the
+  # smallest panels with a single tick).
+  scale_y_continuous(n.breaks = 8, expand = expansion(mult = c(0, 0.05))) +
   labs(
     x = "Error rate",
     y = "Compression ratio"
   ) +
   common_theme +
-  guides(fill = guide_legend(nrow = 1))
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+        legend.box = "vertical", legend.spacing.y = unit(12, "pt"))
 
-ggsave(file.path(fig_dir, "figS1_delta_effect.png"), p_delta, width = 10, height = 6, dpi = 300, bg = "white")
-ggsave(file.path(fig_dir, "figS1_delta_effect.pdf"), p_delta, width = 10, height = 6, bg = "white")
+ggsave(file.path(fig_dir, "figS1_delta_effect.png"), p_delta, width = 10, height = 7.5, dpi = 300, bg = "white")
+ggsave(file.path(fig_dir, "figS1_delta_effect.pdf"), p_delta, width = 10, height = 7.5, bg = "white")
 
 message("Figure S1 saved: figS1_delta_effect.png")
 
@@ -81,15 +115,15 @@ message("Figure S1 saved: figS1_delta_effect.png")
 df_tp_counts <- data %>%
   filter(memory_mode == "high") %>%
   filter((tp_type == "fastga" & mc == 100) | (tp_type == "standard" & mc == 32)) %>%
-  filter(e != 0.05) %>%
+  filter(e %in% c(0.001, 0.01, 0.05, 0.10, 0.20)) %>%
   mutate(
     method = factor(
       case_when(
-        tp_type == "fastga" ~ "FL-TP",
-        cm == "edit-distance" ~ "EB-TP",
-        cm == "diagonal-distance" ~ "DB-TP"
+        tp_type == "fastga" ~ "FL-TP TPA",
+        cm == "edit-distance" ~ "EB-TP TPA",
+        cm == "diagonal-distance" ~ "DB-TP TPA"
       ),
-      levels = c("FL-TP", "EB-TP", "DB-TP")
+      levels = c("FL-TP TPA", "EB-TP TPA", "DB-TP TPA")
     ),
     length_label = factor(
       case_when(
@@ -100,14 +134,14 @@ df_tp_counts <- data %>%
       ),
       levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")
     ),
-    error_label = factor(paste0(e * 100, "%"), levels = c("0.1%", "1%", "10%", "20%"))
+    error_label = factor(paste0(e * 100, "%"), levels = c("0.1%", "1%", "5%", "10%", "20%"))
   )
 
 p_tp_counts <- ggplot(df_tp_counts, aes(x = error_label, y = num_tracepoints, fill = method)) +
   geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
   facet_wrap(~ length_label, nrow = 2, scales = "free_y") +
   scale_y_log10(labels = scales::comma) +
-  scale_fill_manual(values = c("FL-TP" = "#7570b3", "EB-TP" = "#d95f02", "DB-TP" = "#377eb8"), name = "Method") +
+  scale_fill_manual(values = c("FL-TP TPA" = "#7570b3", "EB-TP TPA" = "#d95f02", "DB-TP TPA" = "#377eb8"), name = "Method") +
   labs(
     x = "Error rate",
     y = "Number of tracepoints"
@@ -219,45 +253,52 @@ library(scales)
 
 df_sizes <- data %>%
   filter(memory_mode == "high") %>%
-  filter((tp_type == "fastga" & mc == 100) | (tp_type == "standard" & mc == 32)) %>%
-  filter(e != 0.05) %>%
+  filter((tp_type == "fastga" & mc == 100) |
+         (tp_type == "fastga-native" & mc == 100) |
+         (tp_type == "standard" & mc == 32)) %>%
+  filter(e %in% c(0.001, 0.01, 0.05, 0.10, 0.20)) %>%
   mutate(
     bgzip_bytes = size_cigar_bgzip_bytes,
     tpa_bytes   = size_tpa_bytes,
     method = case_when(tp_type == "fastga" ~ "FL-TP",
+                       tp_type == "fastga-native" ~ "FL-TP FASTGA",
                        cm == "edit-distance" ~ "EB-TP",
                        cm == "diagonal-distance" ~ "DB-TP"),
     length_label = factor(
       case_when(l == 100 ~ "100 bp", l == 1000 ~ "1 Kbp",
                 l == 10000 ~ "10 Kbp", l == 100000 ~ "100 Kbp"),
       levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")),
-    error_label = factor(paste0(e * 100, "%"), levels = c("0.1%", "1%", "10%", "20%"))
+    error_label = factor(paste0(e * 100, "%"), levels = c("0.1%", "1%", "5%", "10%", "20%"))
   )
 
 fltp_s <- df_sizes %>% filter(method == "FL-TP") %>%
-  select(l, e, length_label, error_label, bgzip_bytes, fltp_tpa = tpa_bytes)
+  select(l, e, length_label, error_label, bgzip_bytes, fltp_cigzip_tpa = tpa_bytes)
+fltp_native_s <- df_sizes %>% filter(method == "FL-TP FASTGA") %>%
+  select(l, e, length_label, error_label, fltp_fastga_tpa = tpa_bytes)
 ebtp_s <- df_sizes %>% filter(method == "EB-TP") %>%
   select(l, e, length_label, error_label, ebtp_tpa = tpa_bytes)
 dbtp_s <- df_sizes %>% filter(method == "DB-TP") %>%
   select(l, e, length_label, error_label, dbtp_tpa = tpa_bytes)
 
 sizes_wide <- fltp_s %>%
+  left_join(fltp_native_s, by = c("l", "e", "length_label", "error_label")) %>%
   left_join(ebtp_s, by = c("l", "e", "length_label", "error_label")) %>%
   left_join(dbtp_s, by = c("l", "e", "length_label", "error_label"))
 
 sizes_long <- sizes_wide %>%
-  pivot_longer(cols = c(bgzip_bytes, fltp_tpa, ebtp_tpa, dbtp_tpa),
+  pivot_longer(cols = c(bgzip_bytes, fltp_cigzip_tpa, fltp_fastga_tpa, ebtp_tpa, dbtp_tpa),
                names_to = "format", values_to = "bytes") %>%
   mutate(format_label = factor(
     case_when(format == "bgzip_bytes" ~ "CG BGZIP",
-              format == "fltp_tpa" ~ "FL-TP TPA",
+              format == "fltp_cigzip_tpa" ~ "FL-TP TPA",
+              format == "fltp_fastga_tpa" ~ "FL-TP 1aln",
               format == "ebtp_tpa" ~ "EB-TP TPA",
               format == "dbtp_tpa" ~ "DB-TP TPA"),
-    levels = c("CG BGZIP", "FL-TP TPA", "EB-TP TPA", "DB-TP TPA")))
+    levels = c("CG BGZIP", "FL-TP TPA", "FL-TP 1aln", "EB-TP TPA", "DB-TP TPA")))
 
 size_colors <- scale_fill_manual(
   values = c("CG BGZIP" = "#1b9e77", "FL-TP TPA" = "#7570b3",
-             "EB-TP TPA" = "#d95f02", "DB-TP TPA" = "#377eb8"),
+             "FL-TP 1aln" = "#9e9ac8", "EB-TP TPA" = "#d95f02", "DB-TP TPA" = "#377eb8"),
   name = "Method"
 )
 
@@ -327,5 +368,8 @@ p_sizes <- p_sizes_row1 / p_sizes_row2 +
 ggsave(file.path(fig_dir, "figS7_absolute_sizes.png"), p_sizes, width = 10, height = 6, dpi = 300, bg = "white")
 ggsave(file.path(fig_dir, "figS7_absolute_sizes.pdf"), p_sizes, width = 10, height = 6, bg = "white")
 message("Figure S7 saved: figS7_absolute_sizes.pdf")
+
+# (The former Figure S8, FL-TP compression ratio across trace spacings, was
+# dropped: figS1 now shows the same FL-TP spacing sweep as its top method row.)
 
 message("\nAll supplementary figures (S1, S2, S3, S7) generated successfully!")

@@ -28,10 +28,7 @@ FAtoGDB=$fastga_bin/FAtoGDB
 PAFtoALN=$fastga_bin/PAFtoALN
 ALNtoPAF=$fastga_bin/ALNtoPAF
 ONEview=$fastga_bin/ONEview
-# ALNtoPAF -x anti-scales on this input (~10000 tiny contigs): on a 96-core node
-# decode was T1=3.9s, T8=8.5s, T32=24.7s, T96=48.6s (NUMA/lock contention on the
-# shared GDB; fully cached, 0 I/O). Single-threaded is fastest, so run FASTGA at T1.
-FASTGA_THREADS=1
+FASTGA_THREADS=$(nproc)
 ```
 
 ## Simulated data
@@ -72,7 +69,7 @@ for l in 100 1000 10000 100000; do
 
     # Convert OUT to PAF
     python3 $out_to_paf $dir_base/simulated-data/alns/$prefix.out $dir_base/simulated-data/alns/$prefix.paf
-    $pafcheck --paf $dir_base/simulated-data/alns/$prefix.paf --sequence-files $dir_base/simulated-data/seqs/$prefix.fa --threads 48
+    $pafcheck --paf $dir_base/simulated-data/alns/$prefix.paf --sequence-files $dir_base/simulated-data/seqs/$prefix.fa --threads $(nproc)
   done
 done
 ```
@@ -95,7 +92,15 @@ for l in 100 1000 10000 100000; do
     e_nodot=$(echo $e | sed 's/\.//g')
     prefix=set_${l_nodot}_${e_nodot}
     input_paf="$dir_base/simulated-data/alns/$prefix.paf"
-    
+
+    # Stage inputs to local scratch
+    stage_dir="$scratch_dir/staged/$prefix"
+    mkdir -p "$stage_dir"
+    [ -f "$stage_dir/$prefix.paf" ] || cp -f "$input_paf" "$stage_dir/$prefix.paf"
+    [ -f "$stage_dir/$prefix.fa" ]  || cp -f "$dir_base/simulated-data/seqs/$prefix.fa" "$stage_dir/$prefix.fa"
+    input_paf="$stage_dir/$prefix.paf"
+    seq_staged="$stage_dir/$prefix.fa"
+
     size_cigar=$(awk -F'\t' '{
         out = $1
         for (i = 2; i <= 12; i++) out = out "\t" $i
@@ -110,7 +115,8 @@ for l in 100 1000 10000 100000; do
         exit 1
     fi
 
-    # Compress the CIGAR-only PAF with bgzip -l9 and save to compress folder
+    # Compress the CIGAR-only PAF with bgzip -l9
+    bgzip_scratch="$stage_dir/$prefix.cigar.paf.gz"
     bgzip_file="$dir_base/simulated-data/compress/$prefix.cigar.paf.gz"
     awk -F'\t' '{
         out = $1
@@ -119,12 +125,13 @@ for l in 100 1000 10000 100000; do
             if ($i ~ /^cg:Z:/) { out = out "\t" $i; break }
         }
         print out
-    }' "$input_paf" | bgzip -l9 -c > "$bgzip_file"
-    size_cigar_bgzip=$(wc -c < "$bgzip_file")
+    }' "$input_paf" | bgzip -l9 -c > "$bgzip_scratch"
+    size_cigar_bgzip=$(wc -c < "$bgzip_scratch")
+    cp -f "$bgzip_scratch" "$bgzip_file"
 
     # Benchmark bgzip decompression
     bgzip_decomp_log="$dir_base/simulated-data/decompress/$prefix.bgzip_decompress.log"
-    \time -v bgzip -d -@ $(nproc) -c "$bgzip_file" > $scratch_dir/${prefix}.cigar.paf 2> "$bgzip_decomp_log"
+    \time -v bgzip -d -@ $(nproc) -c "$bgzip_scratch" > $scratch_dir/${prefix}.cigar.paf 2> "$bgzip_decomp_log"
     rm -f $scratch_dir/${prefix}.cigar.paf
 
     bgzip_decomp_runtime_raw=$(grep "Elapsed (wall clock)" "$bgzip_decomp_log" | sed 's/.*: //')
@@ -162,7 +169,7 @@ for l in 100 1000 10000 100000; do
     for _rep in $(seq 1 $baseline_repeats); do
         \time -v $cigzip decode \
             --paf "$baseline_tp_paf" \
-            --sequence-files "$dir_base/simulated-data/seqs/$prefix.fa" \
+            --sequence-files "$seq_staged" \
             --type standard \
             --complexity-metric edit-distance \
             --max-complexity 9999999 \
@@ -246,7 +253,15 @@ run_benchmark() {
     [ -n "${scratch_dir:-}" ] || scratch_dir=$(dirname "$TMP_DIR")
     job_scratch="$scratch_dir/jobs/$full_prefix"
     mkdir -p "$job_scratch"
-    
+
+    # Use the local-scratch copies staged in the precompute loop
+    stage_dir="$scratch_dir/staged/$prefix"
+    mkdir -p "$stage_dir"
+    [ -f "$stage_dir/$prefix.paf" ] || cp -f "$input_paf" "$stage_dir/$prefix.paf"
+    [ -f "$stage_dir/$prefix.fa" ]  || cp -f "$seq_file"  "$stage_dir/$prefix.fa"
+    input_paf="$stage_dir/$prefix.paf"
+    seq_file="$stage_dir/$prefix.fa"
+
     # File paths (all in scratch)
     tp_paf_full="$job_scratch/$full_prefix.tp.full.paf"      # Full output from encode
     tp_paf="$job_scratch/$full_prefix.tp.paf"                # Subsetted: 12 cols + tp:Z:
@@ -342,7 +357,8 @@ run_benchmark() {
         [ "$n_in" = "$n_out" ] && $pafcheck --paf "$decode_paf" --sequence-files "$seq_file" --threads $(nproc) > /dev/null 2>&1 && correct="true"
 
         echo -e "$l\t$e\t$tp_type\t$cm\t$mc\t$memory_mode\t$size_cigar\t$size_cigar_bgzip\t$bgzip_decomp_runtime\t$bgzip_decomp_memory\t$align_runtime\t$align_memory\t0\t$num_1aln_tp\t$encode_runtime\t$encode_memory\t$size_1aln\t0\t0\t0\t0\t$correct\t$decode_runtime\t$decode_memory\t$decode_runtime\t$decode_memory" > "$TMP_DIR/$full_prefix.result.tsv"
-        rm -f "$job_scratch/$prefix.paf" "$job_scratch/$prefix.1aln" "$decode_paf"
+        mv "$job_scratch/$prefix.1aln" "$dir_base/simulated-data/compress/$full_prefix.1aln"
+        rm -f "$job_scratch/$prefix.paf" "$job_scratch/$prefix.1gdb" "$job_scratch/.$prefix.bps" "$decode_paf"
         echo "Completed: $full_prefix"
         return
     fi
@@ -568,6 +584,7 @@ cat "$TMP_DIR"/*.result.tsv | sort -t$'\t' -k1,1n -k2,2n -k3,3 -k4,4 -k5,5n -k6,
 # Cleanup scratch
 rm -rf "$TMP_DIR"
 rm -rf $scratch_dir/jobs
+rm -rf $scratch_dir/staged
 
 echo "Benchmark complete. Results in: $REPORT"
 ```
@@ -755,7 +772,7 @@ Real data - PAF CIGAR -> PAF TRACEPOINTS -> TPA -> PAF TRACEPOINTS -> PAF CIGAR:
 #   (cg:Z: for CIGAR, tp:Z: for tracepoints) - excludes so:i:, sc:i:, etc.
 
 # Benchmark parameters
-MC_LIST="16 32 64 128 256"      # EB-TP/DB-TP max-complexity values (16 = bootstrap warm-up, excluded from reporting)
+MC_LIST="16 32 48 64 80 96 128 256"      # EB-TP/DB-TP max-complexity values (16 = bootstrap warm-up, excluded from reporting)
 #MC_LIST="16 80 96"      # EB-TP/DB-TP max-complexity values (16 = bootstrap warm-up, excluded from reporting)
 FASTGA_MC_LIST="500 1000 2000"  # FL-TP trace spacings (fastga scaling)
 TMP_DIR="$scratch_dir/real_benchmark_tmp"
@@ -1045,6 +1062,8 @@ for paf in $HPRCV2_PAFS/*.paf.gz; do
     # EB-TP and DB-TP across the full sweep (mc=16 is the bootstrap warm-up).
     for cm in edit-distance diagonal-distance; do
         for mc in $MC_LIST; do
+            # diagonal-distance: skip mc > 96
+            [ "$cm" = "diagonal-distance" ] && [ "$mc" -gt 96 ] && continue
             run_benchmark_real "hprcv2-25k" "$input_paf" "$HPRCV2_SEQS" "$cm" "$dir_base" "$cigzip" "$TMP_DIR" "$mc"
         done
     done
@@ -1084,6 +1103,8 @@ for paf in $PRIMATES_PAFS/*.paf.gz; do
     # EB-TP and DB-TP across the full sweep (mc=16 is the bootstrap warm-up).
     for cm in edit-distance diagonal-distance; do
         for mc in $MC_LIST; do
+            # diagonal-distance: skip mc > 96
+            [ "$cm" = "diagonal-distance" ] && [ "$mc" -gt 96 ] && continue
             run_benchmark_real "primates" "$input_paf" "$PRIMATES_SEQS" "$cm" "$dir_base" "$cigzip" "$TMP_DIR" "$mc"
         done
     done
@@ -1216,6 +1237,24 @@ mkdir -p "$out_dir"
 cargo build --release --manifest-path "$tracepoints_dir/Cargo.toml" --example es2bit_bench
 bench=$tracepoints_dir/target/release/examples/es2bit_bench
 
+# WFA2-lib tools + PAF converter, used to synthesise the 0.1% set (see below).
+generate_dataset=/moosefs/guarracino/git/WFA2-lib/bin/generate_dataset
+align_benchmark=/moosefs/guarracino/git/WFA2-lib/bin/align_benchmark
+out_to_paf=$dir_base/scripts/out-to-paf.py
+
+for l in 100 1000 10000 100000; do
+  prefix="set_${l}_0001"
+  $generate_dataset -n 1000 -l "$l" -e 0.001 -o "$out_dir/${prefix}.seq"
+  $align_benchmark -i "$out_dir/${prefix}.seq" -a edit-wfa --wfa-memory high --output "$out_dir/${prefix}.out" -t 1
+  python3 "$out_to_paf" "$out_dir/${prefix}.out" "$out_dir/${prefix}.paf"
+  awk 'BEGIN{c=1}
+       /^>/{print ">target_" c; print substr($0,2)}
+       /^</{print ">query_" c; print substr($0,2); c++}' \
+    "$out_dir/${prefix}.seq" > "$out_dir/${prefix}.fa"
+  "$bench" "$out_dir/${prefix}.paf" "$out_dir/${prefix}.fa" 1000 > "$out_dir/${prefix}.summary.tsv"
+done
+
+# 1/5/10/20% from the published zenodo TPAs.
 for l in 100 1000 10000 100000; do
   for e in 001 005 010 020; do
     prefix="set_${l}_${e}"

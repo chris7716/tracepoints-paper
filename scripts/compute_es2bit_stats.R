@@ -15,8 +15,8 @@ raw <- read_tsv(args[1], show_col_types = FALSE)
 raw <- raw %>%
   mutate(
     n   = as.integer(str_extract(basename(file), "(?<=set_)\\d+")),
-    eps_raw = as.integer(str_extract(basename(file), "(?<=_)\\d+(?=\\.paf)")),
-    eps = eps_raw / 100  # 001→0.01 (1%), 005→0.05 (5%), 010→0.10 (10%), 020→0.20 (20%)
+    eps_code = str_extract(basename(file), "(?<=_)\\d+(?=\\.paf)"),
+    eps = as.numeric(paste0("0.", str_sub(eps_code, 2)))
   )
 
 cat("eps values in data:", sort(unique(raw$eps)), "\n\n")

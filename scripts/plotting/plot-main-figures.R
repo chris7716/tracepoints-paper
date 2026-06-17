@@ -10,10 +10,12 @@ fig_dir <- Sys.getenv("TRACEPOINTS_FIG_DIR", unset = "paper/figures")
 # Read data
 data <- read_tsv(file.path(data_dir, "simulated-data", "benchmark.results.tsv"), show_col_types = FALSE)
 
-# Filter for δ=32 (mc=32) and ultralow memory mode
+# Filter for δ=32 (mc=32) and FL-TP trace spacing 100
 df <- data %>%
   filter(memory_mode == "high") %>%
-  filter((tp_type == "fastga" & mc == 100) | (tp_type == "standard" & mc == 32))
+  filter((tp_type == "fastga" & mc == 100) |
+         (tp_type == "fastga-native" & mc == 100) |
+         (tp_type == "standard" & mc == 32))
 
 # Calculate compression ratios (smaller = better compression)
 df <- df %>%
@@ -22,6 +24,7 @@ df <- df %>%
     ratio_tpa = size_tpa_bytes / size_cigar_bytes,
     method = case_when(
       tp_type == "fastga" ~ "FL-TP",
+      tp_type == "fastga-native" ~ "FL-TP FASTGA",
       cm == "edit-distance" ~ "EB-TP",
       cm == "diagonal-distance" ~ "DB-TP"
     ),
@@ -43,7 +46,11 @@ df <- df %>%
 # Separate FL-TP data
 fltp_data <- df %>%
   filter(method == "FL-TP") %>%
-  select(l, e, length_label, error_label, ratio_bgzip, fltp_tpa = ratio_tpa)
+  select(l, e, length_label, error_label, ratio_bgzip, fltp_cigzip_tpa = ratio_tpa)
+
+fltp_native_data <- df %>%
+  filter(method == "FL-TP FASTGA") %>%
+  select(l, e, length_label, error_label, fltp_fastga_tpa = ratio_tpa)
 
 # Get EB-TP and DB-TP data
 ebtp_data <- df %>%
@@ -56,13 +63,14 @@ dbtp_data <- df %>%
 
 # Join all data
 plot_data <- fltp_data %>%
+  left_join(fltp_native_data, by = c("l", "e", "length_label", "error_label")) %>%
   left_join(ebtp_data, by = c("l", "e", "length_label", "error_label")) %>%
   left_join(dbtp_data, by = c("l", "e", "length_label", "error_label"))
 
-# Pivot to long format with all 4 methods as bars
+# Pivot to long format with all 5 methods as bars
 plot_long <- plot_data %>%
   pivot_longer(
-    cols = c(ratio_bgzip, fltp_tpa, ebtp_tpa, dbtp_tpa),
+    cols = c(ratio_bgzip, fltp_cigzip_tpa, fltp_fastga_tpa, ebtp_tpa, dbtp_tpa),
     names_to = "format",
     values_to = "ratio"
   ) %>%
@@ -70,11 +78,12 @@ plot_long <- plot_data %>%
     format_label = factor(
       case_when(
         format == "ratio_bgzip" ~ "CG BGZIP",
-        format == "fltp_tpa" ~ "FL-TP TPA",
+        format == "fltp_cigzip_tpa" ~ "FL-TP TPA",
+        format == "fltp_fastga_tpa" ~ "FL-TP 1aln",
         format == "ebtp_tpa" ~ "EB-TP TPA",
         format == "dbtp_tpa" ~ "DB-TP TPA"
       ),
-      levels = c("CG BGZIP", "FL-TP TPA", "EB-TP TPA", "DB-TP TPA")
+      levels = c("CG BGZIP", "FL-TP TPA", "FL-TP 1aln", "EB-TP TPA", "DB-TP TPA")
     )
   )
 
@@ -84,8 +93,8 @@ common_theme <- theme_bw(base_size = 15) +
     legend.position = "bottom",
     legend.title = element_text(size = 14, face = "bold"),
     legend.text = element_text(size = 13),
-    axis.text.x = element_text(size = 14),
-    axis.text.y = element_text(size = 14),
+    axis.text.x = element_text(size = 13),
+    axis.text.y = element_text(size = 13),
     axis.title = element_text(size = 15, face = "bold"),
     strip.text = element_text(size = 15, face = "bold"),
     panel.grid.minor = element_blank(),
@@ -97,6 +106,7 @@ color_scale <- scale_fill_manual(
   values = c(
     "CG BGZIP" = "#1b9e77",
     "FL-TP TPA" = "#7570b3",
+    "FL-TP 1aln" = "#9e9ac8",
     "EB-TP TPA" = "#d95f02",
     "DB-TP TPA" = "#377eb8"
   ),
@@ -104,13 +114,13 @@ color_scale <- scale_fill_manual(
 )
 
 # =============================================================================
-# Figure 1: Compression ratios (3 error rates: 1%, 10%, 20%)
+# Figure 1: Compression ratios (3 error rates: 0.1%, 1%, 10%)
 # =============================================================================
 
 library(grid)
 library(gridExtra)
 
-plot_long_3rates <- plot_long %>% filter(error_label != "5%")
+plot_long_3rates <- plot_long %>% filter(error_label %in% c("0.1%", "1%", "10%"))
 
 plot_long_3r_row1 <- plot_long_3rates %>% filter(length_label %in% c("100 bp", "1 Kbp"))
 plot_long_3r_row2 <- plot_long_3rates %>% filter(length_label %in% c("10 Kbp", "100 Kbp"))
@@ -119,7 +129,8 @@ p_3r_row1 <- ggplot(plot_long_3r_row1, aes(x = error_label, y = ratio, fill = fo
   geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
   facet_wrap(~ length_label, nrow = 1) +
   color_scale +
-  scale_y_continuous(breaks = seq(0, 1, by = 0.1), expand = expansion(mult = c(0, 0.05))) +
+  scale_y_continuous(breaks = seq(0, 1.3, by = 0.1), limits = c(0, NA),
+                     expand = expansion(mult = c(0, 0.05))) +
   labs(x = NULL, y = "Compression ratio") +
   common_theme +
   theme(legend.position = "none", axis.text.x = element_blank(), axis.ticks.x = element_blank())
@@ -128,7 +139,7 @@ p_3r_row1 <- ggplot(plot_long_3r_row1, aes(x = error_label, y = ratio, fill = fo
 # so small tracepoint ratios are legible, while BGZIP/FL-TP bars (up to ~0.3)
 # remain visible above the break.
 low_max <- 0.05
-high_max <- 0.80     # 0.1% pushes FL-TP up to ~0.73 (CIGAR is trivially compressible at low error)
+high_max <- 1.10     # 0.1% pushes FL-TP FASTGA to ~1.05 at 10 Kb (TPA larger than raw CIGAR when edits are few)
 low_visual_end <- 0.40
 gap_visual <- 0.02
 high_visual_start <- low_visual_end + gap_visual
@@ -147,9 +158,9 @@ break_data <- data.frame(length_label = factor(c("10 Kbp", "100 Kbp"),
   levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")))
 
 low_ticks <- seq(0, low_max, by = 0.01)
-high_ticks <- c(0.2, 0.4, 0.6, 0.8)
+high_ticks <- c(0.25, 0.5, 0.75, 1.0)
 breaks_r2 <- c(transform_y(low_ticks), transform_y(high_ticks))
-labels_r2 <- c(sprintf("%.2f", low_ticks), sprintf("%.1f", high_ticks))
+labels_r2 <- c(sprintf("%.2f", low_ticks), sprintf("%.2f", high_ticks))
 
 p_3r_row2 <- ggplot(plot_long_3r_row2, aes(x = error_label, y = ratio_plot, fill = format_label)) +
   geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
@@ -167,12 +178,13 @@ p_3r_row2 <- ggplot(plot_long_3r_row2, aes(x = error_label, y = ratio_plot, fill
   common_theme +
   guides(fill = guide_legend(nrow = 1))
 
-g1_3r <- ggplotGrob(p_3r_row1)
-g2_3r <- ggplotGrob(p_3r_row2)
-maxWidth_3r <- unit.pmax(g1_3r$widths, g2_3r$widths)
-g1_3r$widths <- maxWidth_3r
-g2_3r$widths <- maxWidth_3r
-p_comp_3rates <- grid.arrange(g1_3r, g2_3r, ncol = 1, heights = c(0.45, 0.55))
+# Stack with patchwork so the two rows' panel regions are aligned and equal
+# height (grid.arrange split the height before the legend/x-axis, making the
+# top panels taller than the bottom ones).
+library(patchwork)
+p_comp_3rates <- (p_3r_row1 / p_3r_row2) +
+  plot_layout(heights = c(1, 1), guides = "collect") &
+  theme(legend.position = "bottom")
 
 ggsave(file.path(fig_dir, "compression_ratios.png"), p_comp_3rates, width = 10, height = 6, dpi = 300, bg = "white")
 ggsave(file.path(fig_dir, "compression_ratios.pdf"), p_comp_3rates, width = 10, height = 6, bg = "white")
@@ -188,16 +200,19 @@ library(cowplot)
 
 df_runtime <- data %>%
   filter(memory_mode == "high") %>%
-  filter((tp_type == "fastga" & mc == 100) | (tp_type == "standard" & mc == 32)) %>%
-  filter(e != 0.05) %>%
+  filter((tp_type == "fastga" & mc == 100) |
+         (tp_type == "fastga-native" & mc == 100) |
+         (tp_type == "standard" & mc == 32)) %>%
+  filter(e %in% c(0.001, 0.01, 0.10)) %>%
   mutate(
     method = factor(
       case_when(
         tp_type == "fastga" ~ "FL-TP",
+        tp_type == "fastga-native" ~ "FL-TP FASTGA",
         cm == "edit-distance" ~ "EB-TP",
         cm == "diagonal-distance" ~ "DB-TP"
       ),
-      levels = c("FL-TP", "EB-TP", "DB-TP")
+      levels = c("FL-TP", "FL-TP FASTGA", "EB-TP", "DB-TP")
     ),
     length_label = factor(
       case_when(
@@ -211,7 +226,9 @@ df_runtime <- data %>%
     error_label = factor(paste0(e * 100, "%"), levels = c("0.1%", "1%", "10%", "20%"))
   )
 
-method_levels <- c("ORIGINAL", "CG BGZIP", "FL-TP", "EB-TP", "DB-TP")
+method_levels <- c("ORIGINAL", "CG BGZIP", "FL-TP", "FL-TP FASTGA", "EB-TP", "DB-TP")
+# Legend display labels carry the stored file format (TPA vs FASTGA .1aln)
+method_display <- c("ORIGINAL", "CG BGZIP", "FL-TP TPA", "FL-TP 1aln", "EB-TP TPA", "DB-TP TPA")
 
 # Prepare runtime data for ORIGINAL (original alignment computation) - use FL-TP rows as reference
 df_align_runtime <- df_runtime %>%
@@ -225,9 +242,15 @@ df_bgzip_runtime <- df_runtime %>%
   mutate(method = factor("CG BGZIP", levels = method_levels)) %>%
   select(l, e, method, length_label, error_label, runtime = bgzip_decompress_runtime_sec)
 
-# Prepare runtime data: TPA -> PAF = decompress + decode
+# Prepare runtime data: TPA -> PAF = decompress + decode (cigzip FL-TP)
 df_fltp_runtime <- df_runtime %>%
   filter(method == "FL-TP") %>%
+  mutate(runtime = decompress_runtime_sec + decode_runtime_sec) %>%
+  select(l, e, method, length_label, error_label, runtime)
+
+# FASTGA native FL-TP: no separate compress/decompress stage, decode (ALNtoPAF -x) only
+df_fltp_native_runtime <- df_runtime %>%
+  filter(method == "FL-TP FASTGA") %>%
   mutate(runtime = decompress_runtime_sec + decode_runtime_sec) %>%
   select(l, e, method, length_label, error_label, runtime)
 
@@ -236,8 +259,9 @@ df_ebdb_runtime <- df_runtime %>%
   mutate(runtime = decompress_runtime_sec + decode_heuristic_runtime_sec) %>%
   select(l, e, method, length_label, error_label, runtime)
 
-df_combined_runtime <- bind_rows(df_align_runtime, df_bgzip_runtime, df_fltp_runtime, df_ebdb_runtime) %>%
-  mutate(method = factor(method, levels = method_levels))
+df_combined_runtime <- bind_rows(df_align_runtime, df_bgzip_runtime, df_fltp_runtime,
+                                 df_fltp_native_runtime, df_ebdb_runtime) %>%
+  mutate(method = factor(method, levels = method_levels, labels = method_display))
 
 # Prepare memory data for ORIGINAL
 df_align_memory <- df_runtime %>%
@@ -253,9 +277,15 @@ df_bgzip_memory <- df_runtime %>%
   select(l, e, method, length_label, error_label, memory_kb = bgzip_decompress_memory_kb) %>%
   mutate(memory_mb = memory_kb / 1024)
 
-# Prepare memory data: TPA -> PAF = max(decompress, decode) for peak memory
+# Prepare memory data: TPA -> PAF = max(decompress, decode) for peak memory (cigzip FL-TP)
 df_fltp_memory <- df_runtime %>%
   filter(method == "FL-TP") %>%
+  mutate(memory_kb = pmax(decompress_memory_kb, decode_memory_kb)) %>%
+  select(l, e, method, length_label, error_label, memory_kb) %>%
+  mutate(memory_mb = memory_kb / 1024)
+
+df_fltp_native_memory <- df_runtime %>%
+  filter(method == "FL-TP FASTGA") %>%
   mutate(memory_kb = pmax(decompress_memory_kb, decode_memory_kb)) %>%
   select(l, e, method, length_label, error_label, memory_kb) %>%
   mutate(memory_mb = memory_kb / 1024)
@@ -266,11 +296,13 @@ df_ebdb_memory <- df_runtime %>%
   select(l, e, method, length_label, error_label, memory_kb) %>%
   mutate(memory_mb = memory_kb / 1024)
 
-df_combined_memory <- bind_rows(df_align_memory, df_bgzip_memory, df_fltp_memory, df_ebdb_memory) %>%
-  mutate(method = factor(method, levels = method_levels))
+df_combined_memory <- bind_rows(df_align_memory, df_bgzip_memory, df_fltp_memory,
+                                df_fltp_native_memory, df_ebdb_memory) %>%
+  mutate(method = factor(method, levels = method_levels, labels = method_display))
 
 method_colors_5 <- c("ORIGINAL" = "#e41a1c", "CG BGZIP" = "#1b9e77",
-                      "FL-TP" = "#7570b3", "EB-TP" = "#d95f02", "DB-TP" = "#377eb8")
+                      "FL-TP TPA" = "#7570b3", "FL-TP 1aln" = "#9e9ac8",
+                      "EB-TP TPA" = "#d95f02", "DB-TP TPA" = "#377eb8")
 
 library(ggh4x)
 
@@ -402,12 +434,13 @@ p_dc_memory_log <- ggplot(df_combined_memory, aes(x = error_label, y = memory_mb
   theme(strip.text = element_blank()) +
   guides(fill = guide_legend(nrow = 1))
 
-g1_dc_log <- ggplotGrob(p_dc_runtime_log)
-g2_dc_log <- ggplotGrob(p_dc_memory_log + theme(legend.position = "bottom") + guides(fill = guide_legend(nrow = 1)))
-maxWidth_dc_log <- unit.pmax(g1_dc_log$widths, g2_dc_log$widths)
-g1_dc_log$widths <- maxWidth_dc_log
-g2_dc_log$widths <- maxWidth_dc_log
-p_decoding_cost_log <- grid.arrange(g1_dc_log, g2_dc_log, ncol = 1, heights = c(0.45, 0.55))
+# Stack with patchwork so runtime and memory panels are aligned and equal height.
+# Apply the legend spec via `&` so both plots carry an identical guide and
+# patchwork collects them into a single legend.
+p_decoding_cost_log <- (p_dc_runtime_log / p_dc_memory_log) +
+  plot_layout(heights = c(1, 1), guides = "collect") &
+  theme(legend.position = "bottom") &
+  guides(fill = guide_legend(nrow = 1))
 
 ggsave(file.path(fig_dir, "decoding_cost.png"), p_decoding_cost_log, width = 10, height = 6, dpi = 300, bg = "white")
 ggsave(file.path(fig_dir, "decoding_cost.pdf"), p_decoding_cost_log, width = 10, height = 6, bg = "white")
