@@ -155,94 +155,77 @@ ggsave(file.path(fig_dir, "figS2_tracepoint_counts.pdf"), p_tp_counts, width = 1
 message("Figure S2 saved: figS2_tracepoint_counts.pdf")
 
 # =============================================================================
-# Figure S3: Alignment score distributions (HPRCv2 and T2T-Primates)
+# Figure S3: Alignment score distributions, raw and length-normalized, by target
 # =============================================================================
 
 score_dir <- file.path(data_dir, "real-data")
+RAW_LAB <- "|Alignment score|"
+PB_LAB  <- "|Alignment score / alignment length|"
 
-df_hprc <- read_tsv(file.path(score_dir, "hprcv2-25k.input-score-frequency.tsv"),
-                    show_col_types = FALSE) %>%
-  mutate(dataset = "HPRCv2")
-
-df_t2t <- read_tsv(file.path(score_dir, "t2t-ape-pangenome.input-score-frequency.by-target.tsv"),
-                   show_col_types = FALSE) %>%
-  mutate(dataset = "T2T-Primates")
-
-# Map targets to species (grouped as in plot-supp-figure-primates.R)
+# Map PanSN target prefix to species. HPRCv2 is all human-vs-human, coloured "Human".
+tgt_species <- function(t) case_when(
+  t %in% c("chm13", "grch38", "hg002") ~ "Human",
+  t == "mPanTro3" ~ "Chimpanzee",
+  t == "mPanPan1" ~ "Bonobo",
+  t == "mGorGor1" ~ "Gorilla",
+  t == "mPonAbe1" ~ "B. Orangutan",
+  t == "mPonPyg2" ~ "S. Orangutan",
+  t == "mSymSyn1" ~ "Siamang",
+  TRUE ~ NA_character_
+)
 species_levels <- c("Human", "Chimpanzee", "Bonobo", "Gorilla", "B. Orangutan", "S. Orangutan", "Siamang")
+species_colors <- c("Human" = "#E41A1C", "Chimpanzee" = "#377EB8", "Bonobo" = "#4DAF4A",
+                    "Gorilla" = "#984EA3", "B. Orangutan" = "#FF7F00",
+                    "S. Orangutan" = "#FFD92F", "Siamang" = "#A65628")
 
-df_hprc_plot <- df_hprc %>%
-  mutate(neg_score = -score, species = NA_character_) %>%
-  filter(neg_score > 0)
+# Four histograms: raw |score| and length-normalized |score|/length (per aligned
+# base), for HPRCv2 (pooled, all "Human") and T2T apes (by target genome).
+sc_hprc_raw <- read_tsv(file.path(score_dir, "hprcv2-25k.input-score-frequency.tsv"), show_col_types = FALSE) %>%
+  transmute(neg = -score, frequency, dataset = "HPRCv2", metric = RAW_LAB, species = "Human")
+sc_hprc_pb  <- read_tsv(file.path(score_dir, "hprcv2-25k.input-scorePerBase-frequency.tsv"), show_col_types = FALSE) %>%
+  transmute(neg = -score_per_base, frequency, dataset = "HPRCv2", metric = PB_LAB, species = "Human")
+sc_t2t_raw  <- read_tsv(file.path(score_dir, "t2t-ape-pangenome.input-score-frequency.by-target.tsv"), show_col_types = FALSE) %>%
+  transmute(neg = -score, frequency, dataset = "T2T-Primates", metric = RAW_LAB, species = tgt_species(target))
+sc_t2t_pb   <- read_tsv(file.path(score_dir, "t2t-ape-pangenome.input-scorePerBase-frequency.by-target.tsv"), show_col_types = FALSE) %>%
+  transmute(neg = -score_per_base, frequency, dataset = "T2T-Primates", metric = PB_LAB, species = tgt_species(target))
 
-df_t2t_plot <- df_t2t %>%
-  mutate(
-    neg_score = -score,
-    species = case_when(
-      target %in% c("chm13", "grch38", "hg002") ~ "Human",
-      target == "mPanTro3"  ~ "Chimpanzee",
-      target == "mPanPan1"  ~ "Bonobo",
-      target == "mGorGor1"  ~ "Gorilla",
-      target == "mPonAbe1"  ~ "B. Orangutan",
-      target == "mPonPyg2"  ~ "S. Orangutan",
-      target == "mSymSyn1"  ~ "Siamang"
-    )
-  ) %>%
-  filter(neg_score > 0) %>%
-  group_by(neg_score, dataset, species) %>%
-  summarise(frequency = sum(frequency), .groups = "drop")
+df_scores <- bind_rows(sc_hprc_raw, sc_hprc_pb, sc_t2t_raw, sc_t2t_pb) %>% filter(neg > 0)
 
-df_scores <- bind_rows(df_hprc_plot, df_t2t_plot) %>%
-  mutate(
-    dataset = factor(dataset, levels = c("HPRCv2", "T2T-Primates")),
-    species = factor(species, levels = species_levels)
-  )
-
-# Log-spaced bins shared across both datasets (kills integer-score spikes and
-# makes bar heights reflect the total alignment count)
-log_bin_edges <- 10 ^ seq(
-  log10(max(1, min(df_scores$neg_score))),
-  log10(max(df_scores$neg_score)),
-  length.out = 81  # 80 bins
-)
+# Log-spaced bins per metric (shared across datasets so x is comparable within each
+# column); then stack species within each bin.
 df_scores_binned <- df_scores %>%
-  mutate(bin_idx = findInterval(neg_score, log_bin_edges, all.inside = TRUE)) %>%
-  group_by(dataset, bin_idx) %>%
+  group_by(metric) %>%
+  group_modify(~{
+    edges <- 10 ^ seq(log10(min(.x$neg)), log10(max(.x$neg)), length.out = 81)
+    idx <- findInterval(.x$neg, edges, all.inside = TRUE)
+    mutate(.x, bin_low = edges[idx], bin_high = edges[idx + 1])
+  }) %>%
+  ungroup() %>%
+  group_by(metric, dataset, bin_low, bin_high, species) %>%
   summarise(frequency = sum(frequency), .groups = "drop") %>%
-  mutate(
-    bin_low  = log_bin_edges[bin_idx],
-    bin_high = log_bin_edges[bin_idx + 1],
-    bin_center = 10 ^ ((log10(bin_low) + log10(bin_high)) / 2)
-  )
-
-species_colors <- c(
-  "Human"        = "#E41A1C",
-  "Chimpanzee"   = "#377EB8",
-  "Bonobo"       = "#4DAF4A",
-  "Gorilla"      = "#984EA3",
-  "B. Orangutan"  = "#FF7F00",
-  "S. Orangutan"  = "#FFFF33",
-  "Siamang"      = "#A65628"
-)
-
-# Compact y-axis labels: 100k, 200k, etc.
-compact_label <- function(x) {
-  ifelse(x >= 1e6, paste0(x / 1e6, "M"),
-  ifelse(x >= 1e3, paste0(x / 1e3, "k"),
-  as.character(x)))
-}
+  mutate(species = factor(species, levels = species_levels)) %>%
+  arrange(metric, dataset, bin_low, species) %>%
+  group_by(metric, dataset, bin_low, bin_high) %>%
+  mutate(ymax = cumsum(frequency), ymin = ymax - frequency) %>%
+  ungroup() %>%
+  mutate(dataset = factor(dataset, levels = c("HPRCv2", "T2T-Primates")),
+         metric  = factor(metric,  levels = c(RAW_LAB, PB_LAB)))
 
 p_scores <- ggplot(df_scores_binned,
-                   aes(xmin = bin_low, xmax = bin_high, ymin = 0, ymax = frequency)) +
+                   aes(xmin = bin_low, xmax = bin_high, ymin = ymin, ymax = ymax, fill = species)) +
   geom_rect() +
-  facet_wrap(~ dataset, nrow = 2, scales = "free_y") +
-  scale_x_log10(breaks = 10^(1:7), labels = scales::comma) +
-  scale_y_continuous(labels = compact_label, expand = expansion(mult = c(0, 0.05))) +
-  labs(x = "|Alignment score|", y = "Frequency") +
-  common_theme
+  ggh4x::facet_grid2(dataset ~ metric, scales = "free", independent = "y") +
+  scale_x_log10(breaks = scales::breaks_log(n = 6),
+                labels = scales::label_number(scale_cut = scales::cut_short_scale(), drop0trailing = TRUE)) +
+  scale_y_continuous(labels = scales::label_number(scale_cut = scales::cut_short_scale()),
+                     expand = expansion(mult = c(0, 0.05))) +
+  scale_fill_manual(values = species_colors, name = "Target genome") +
+  labs(x = NULL, y = "Frequency") +
+  common_theme +
+  guides(fill = guide_legend(nrow = 1))
 
-ggsave(file.path(fig_dir, "figS3_score_distributions.png"), p_scores, width = 10, height = 6, dpi = 300, bg = "white")
-ggsave(file.path(fig_dir, "figS3_score_distributions.pdf"), p_scores, width = 10, height = 6, bg = "white")
+ggsave(file.path(fig_dir, "figS3_score_distributions.png"), p_scores, width = 12, height = 7, dpi = 300, bg = "white")
+ggsave(file.path(fig_dir, "figS3_score_distributions.pdf"), p_scores, width = 12, height = 7, bg = "white")
 
 message("Figure S3 saved: figS3_score_distributions.pdf")
 
