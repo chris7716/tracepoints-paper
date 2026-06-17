@@ -748,6 +748,56 @@ find . -name "*.paf.gz" | \
   > $dir_base/t2t-ape-pangenome/t2t-ape-pangenome.input-score-frequency.by-target.tsv
 ```
 
+Length-normalized score distributions (per-base penalty = |score| / alignment block length, PAF column 11):
+
+```shell
+# Same pipeline as above, but instead of histogramming the raw score we keep the
+# alignment block length (PAF col 11) and emit score/length per alignment, then
+# histogram that. Reviewer request: disentangle divergence from alignment length.
+
+# HPRCv2
+cd $scratch_dir/hprcv2-25k
+find . -name "*.paf.gz" | \
+  parallel -j $(nproc) \
+    "$cigzip encode --paf {} \
+      --type standard --complexity-metric edit-distance \
+      --max-complexity 9999999 \
+      --distance gap-affine2p --penalties 5,8,2,24,1 \
+      -t 1 2>/dev/null \
+    | awk -F'\t' '{len=\$11; for(i=13;i<=NF;i++) if(\$i~/^sc:i:/){s=substr(\$i,6)+0; if(len>0) printf \"%.5f\\n\", s/len; next}}'" \
+  | sort -n | uniq -c \
+  | awk 'BEGIN{OFS="\t"; print "score_per_base","frequency"}{print $2,$1}' \
+  > $dir_base/hprcv2-25k/hprcv2-25k.input-scorePerBase-frequency.tsv
+
+# T2T ape pangenome
+cd $scratch_dir/t2t-ape-pangenome
+find . -name "*.paf.gz" | \
+  parallel -j $(nproc) \
+    "$cigzip encode --paf {} \
+      --type standard --complexity-metric edit-distance \
+      --max-complexity 9999999 \
+      --distance gap-affine2p --penalties 5,8,2,24,1 \
+      -t 1 2>/dev/null \
+    | awk -F'\t' '{len=\$11; for(i=13;i<=NF;i++) if(\$i~/^sc:i:/){s=substr(\$i,6)+0; if(len>0) printf \"%.5f\\n\", s/len; next}}'" \
+  | sort -n | uniq -c \
+  | awk 'BEGIN{OFS="\t"; print "score_per_base","frequency"}{print $2,$1}' \
+  > $dir_base/t2t-ape-pangenome/t2t-ape-pangenome.input-scorePerBase-frequency.tsv
+
+# T2T ape pangenome - length-normalized score distribution by target genome
+cd $scratch_dir/t2t-ape-pangenome
+find . -name "*.paf.gz" | \
+  parallel -j $(nproc) \
+    "$cigzip encode --paf {} \
+      --type standard --complexity-metric edit-distance \
+      --max-complexity 9999999 \
+      --distance gap-affine2p --penalties 5,8,2,24,1 \
+      -t 1 2>/dev/null \
+    | awk -F'\t' '{len=\$11; target=\$6; sub(/#.*/, \"\", target); for(i=13;i<=NF;i++) if(\$i~/^sc:i:/){s=substr(\$i,6)+0; if(len>0) printf \"%.5f\\t%s\\n\", s/len, target; next}}'" \
+  | sort -t$'\t' -k2,2 -k1,1n | uniq -c \
+  | awk 'BEGIN{OFS="\t"; print "score_per_base","frequency","target"}{print $2,$1,$3}' \
+  > $dir_base/t2t-ape-pangenome/t2t-ape-pangenome.input-scorePerBase-frequency.by-target.tsv
+```
+
 Tracepoint statistics:
 
 ```shell
