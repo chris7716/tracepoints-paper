@@ -100,7 +100,7 @@ p_delta <- ggplot() +
     y = "Compression ratio"
   ) +
   common_theme +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
         legend.box = "vertical", legend.spacing.y = unit(12, "pt"))
 
 ggsave(file.path(fig_dir, "figS1_delta_effect.png"), p_delta, width = 10, height = 7.5, dpi = 300, bg = "white")

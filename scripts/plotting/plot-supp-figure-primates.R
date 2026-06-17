@@ -15,6 +15,12 @@ fig_dir <- Sys.getenv("TRACEPOINTS_FIG_DIR", unset = "paper/figures")
 # Read primate benchmark data
 data <- read_tsv(file.path(data_dir, "real-data", "t2t-ape-pangenome.benchmark.results.tsv"), show_col_types = FALSE)
 
+# Keep only the thresholds shown in the figure (EB-TP delta=32,64,128; DB-TP b=32).
+# The benchmark TSV also contains additional thresholds (b=16,64; delta=16,256).
+data <- data %>%
+  filter((cm == "edit-distance" & mc %in% c(32, 64, 128, 256)) |
+         (cm == "diagonal-distance" & mc %in% c(32, 64)))
+
 # Process data
 df <- data %>%
   mutate(
@@ -68,8 +74,8 @@ df <- df %>%
     target = factor(target, levels = target_order),
     target_label = factor(target_labels[as.character(target)], levels = target_labels),
     method = factor(method, levels = c(
-      "EB-TP TPA (\u03b4=32)", "EB-TP TPA (\u03b4=64)", "EB-TP TPA (\u03b4=128)",
-      "DB-TP TPA (b=32)"
+      "EB-TP TPA (\u03b4=32)", "EB-TP TPA (\u03b4=64)", "EB-TP TPA (\u03b4=128)", "EB-TP TPA (\u03b4=256)",
+      "DB-TP TPA (b=32)", "DB-TP TPA (b=64)"
     )),
     species = factor(species, levels = c("Human", "Chimpanzee", "Bonobo", "Gorilla", "B. Orangutan", "S. Orangutan", "Siamang"))
   )
@@ -92,8 +98,8 @@ common_theme <- theme_bw(base_size = 15) +
 # Color scale: warm gradient for EB-TP, cool gradient for DB-TP
 color_scale <- scale_fill_manual(
   values = c(
-    "EB-TP TPA (\u03b4=32)" = "#d95f02", "EB-TP TPA (\u03b4=64)" = "#e6950a", "EB-TP TPA (\u03b4=128)" = "#f0c050",
-    "DB-TP TPA (b=32)" = "#1b5e9b"
+    "EB-TP TPA (\u03b4=32)" = "#d95f02", "EB-TP TPA (\u03b4=64)" = "#e6950a", "EB-TP TPA (\u03b4=128)" = "#f0c050", "EB-TP TPA (\u03b4=256)" = "#fee391",
+    "DB-TP TPA (b=32)" = "#1b5e9b", "DB-TP TPA (b=64)" = "#6baed6"
   ),
   name = "Method"
 )
