@@ -77,15 +77,43 @@ done
 Simulation - PAF CIGAR -> PAF TRACEPOINTS -> TPA -> PAF TRACEPOINTS -> PAF CIGAR:
 
 ```shell
+# Run the whole simulation in a subshell so an abort exits only this subshell, NOT the terminal.
+(
 # Create all output directories
 mkdir -p $dir_base/simulated-data/{encode,compress,decompress,decode}
 mkdir -p $scratch_dir/benchmark_tmp
 
-# Unified report (final location)
 REPORT="$dir_base/simulated-data/benchmark.results.tsv"
 TMP_DIR="$scratch_dir/benchmark_tmp"
 
+# Strip terminal I/D from each CIGAR because FL-TP cannot represent a terminal indel due to FASTGA's ALNtoPAF requirement
+# for every alignment to end in =/X. Trimming up front makes input==decoded for FL-TP and is harmless to EB-TP/DB-TP.
+# Empty-after-trim alignments are dropped.
+stage_inputs(){
+    mkdir -p "$3"
+    [ -f "$3/$4.fa" ]  || cp "$2" "$3/$4.fa"                  # canonical sequences (unchanged)
+    [ -f "$3/$4.paf" ] || awk 'BEGIN{FS=OFS="\t"}
+        { ci=0; for(j=13;j<=NF;j++) if($j ~ /^cg:Z:/){ci=j; break}
+          if(ci==0){print; next}
+          # rev: on - strand the query is reverse-complemented, so a query-consuming (I) op at the START
+          # of the CIGAR consumes from the qe end (and at the END consumes from qs). Target (D) is always
+          # forward. (Simulated data is all + strand, but keep this identical to the real-data trim.)
+          rev=($5=="-"); c=substr($ci,6); qs=$3; qe=$4; ts=$8; te=$9; df=0; db=0; L=length(c)
+          while(df<L){ w=substr(c,df+1,20); if(!match(w,/^[0-9]+[ID]/)) break
+            op=substr(w,RLENGTH,1); len=substr(w,1,RLENGTH-1)+0
+            if(op=="I"){ if(rev) qe-=len; else qs+=len } else ts+=len; df+=RLENGTH }
+          while(df+db<L){ last=substr(c,L-db,1); if(last!="I" && last!="D") break
+            s=L-db-19; if(s<df+1) s=df+1; w=substr(c,s,L-db-s+1)
+            match(w,/[0-9]+[ID]$/); m=substr(w,RSTART); len=substr(m,1,length(m)-1)+0
+            if(last=="I"){ if(rev) qs+=len; else qe-=len } else te-=len; db+=length(m) }
+          if(df||db){ c=substr(c,df+1,L-df-db); $3=qs;$4=qe;$8=ts;$9=te; $ci="cg:Z:" c }
+          if(substr($ci,6)==""){ next }                       # drop any alignment that trims to empty
+          print }' "$1" > "$3/$4.paf"
+}
+export -f stage_inputs
+
 # Precompute CIGAR sizes (fast, run sequentially)
+: > "$TMP_DIR/cigar_sizes.txt"
 for l in 100 1000 10000 100000; do
   for e in 0.001 0.01 0.05 0.10 0.20; do
     l_nodot=$(echo $l | sed 's/\.//g')
@@ -93,11 +121,9 @@ for l in 100 1000 10000 100000; do
     prefix=set_${l_nodot}_${e_nodot}
     input_paf="$dir_base/simulated-data/alns/$prefix.paf"
 
-    # Stage inputs to local scratch
+    # Stage to local scratch
     stage_dir="$scratch_dir/staged/$prefix"
-    mkdir -p "$stage_dir"
-    [ -f "$stage_dir/$prefix.paf" ] || cp -f "$input_paf" "$stage_dir/$prefix.paf"
-    [ -f "$stage_dir/$prefix.fa" ]  || cp -f "$dir_base/simulated-data/seqs/$prefix.fa" "$stage_dir/$prefix.fa"
+    stage_inputs "$input_paf" "$dir_base/simulated-data/seqs/$prefix.fa" "$stage_dir" "$prefix"
     input_paf="$stage_dir/$prefix.paf"
     seq_staged="$stage_dir/$prefix.fa"
 
@@ -236,13 +262,19 @@ run_benchmark() {
     
     prefix2=$tp_type.$cm.$mc.$memory_mode
     full_prefix="$prefix.$prefix2"
-    [ "$tp_type" = "fastga" ] && cmd_args="" || cmd_args="--complexity-metric $cm"
-    # Use no compression layer for all methods. The empty strategy (standard) defaults to automatic, which selects nocomp.
-    # For fastga we name the rice strategy explicitly, so we must add -nocomp; otherwise an explicit strategy defaults to a zstd wrapper.
-    [ "$tp_type" = "fastga" ] && strategy_args="--strategy rice-nocomp;rice-nocomp" || strategy_args=""
+    [[ "$tp_type" == fastga* ]] && cmd_args="" || cmd_args="--complexity-metric $cm"
+    # Compression strategy
+    if [ "$tp_type" = "fastga" ]; then
+        strategy_args="--strategy elias-fano-nocomp;huffman-nocomp"
+    elif [ "$tp_type" = "fastga-no-diff" ]; then
+        strategy_args="--strategy huffman-nocomp"
+    elif [ "$cm" = "edit-distance" ]; then
+        strategy_args="--strategy rice-nocomp;2d-delta-nocomp"
+    else  # diagonal-distance
+        strategy_args="--strategy raw-nocomp;2d-delta-nocomp"
+    fi
 
-    # Repeat 10 times for stable averages: standard with mc<=64, or any fastga variant (fastga,
-    # fastga-native) on short sequences (l < 10k). Large fastga jobs are slow, so they run once.
+    # Repeat 10 times for stable averages: standard with mc<=64, or any fastga variant on short sequences (l < 10k). Large fastga jobs are slow, so they run once.
     if [ "$mc" -le 64 ] || { [[ "$tp_type" == fastga* ]] && [ "$l" -lt 10000 ]; }; then
         num_repeats=10
     else
@@ -256,9 +288,6 @@ run_benchmark() {
 
     # Use the local-scratch copies staged in the precompute loop
     stage_dir="$scratch_dir/staged/$prefix"
-    mkdir -p "$stage_dir"
-    [ -f "$stage_dir/$prefix.paf" ] || cp -f "$input_paf" "$stage_dir/$prefix.paf"
-    [ -f "$stage_dir/$prefix.fa" ]  || cp -f "$seq_file"  "$stage_dir/$prefix.fa"
     input_paf="$stage_dir/$prefix.paf"
     seq_file="$stage_dir/$prefix.fa"
 
@@ -268,13 +297,18 @@ run_benchmark() {
     tpa_file="$job_scratch/$full_prefix.tpa"
     decomp_paf="$job_scratch/$full_prefix.decomp.tp.paf"
     decode_paf="$job_scratch/$full_prefix.paf"
-    decode_heur_paf="$job_scratch/$full_prefix.heuristic.paf"
     encode_log="$job_scratch/$full_prefix.encode.log"
     compress_log="$job_scratch/$full_prefix.compress.log"
     decompress_log="$job_scratch/$full_prefix.decompress.log"
     decode_log="$job_scratch/$full_prefix.decode.log"
-    decode_heur_log="$job_scratch/$full_prefix.decode.heuristic.log"
-    
+
+    # Crash guard: if any external tool aborts, stop the whole run.
+    guard(){
+        echo "ERROR: $1 (exit $2) for $full_prefix; aborting run" >&2
+        [ -n "${3:-}" ] && [ -s "${3:-}" ] && { echo "----- $1 log (tail) -----" >&2; tail -40 "$3" >&2; echo "-------------------------" >&2; }
+        rm -rf "$job_scratch"; exit 1
+    }
+
     # AWK script to extract 12 mandatory columns + tp:Z: tag
     extract_tp_cols='BEGIN { FS=OFS="\t" }
     {
@@ -305,32 +339,20 @@ run_benchmark() {
     # Runs in the same loop as the cigzip methods. PAFtoALN hard-codes trace spacing TSPACE=100,
     # so this exists only at mc=100. Maps into the shared schema: .1aln size -> size_tpa_bytes,
     # PAFtoALN -> encode, ALNtoPAF -x -> decode; compress/decompress stages are N/A (0).
-    if [ "$tp_type" = "fastga-native" ]; then
-        # Trim terminal indels (leading/trailing I/D) so every alignment ends in =/X, adjusting the
-        # q/t start-end coords. FASTGA's ALNtoPAF -x otherwise mis-reconstructs a terminal insertion
-        # (e.g. 99=1I -> invalid 99=1X that references a non-existent target base, failing pafcheck);
-        # the trimmed alignment is exactly what cigzip's FL-TP decode produces, so the two stay consistent.
-        # PAFtoALN writes <basename>.1aln next to this PAF.
-        awk 'BEGIN{FS=OFS="\t"}
-        { ci=0; for(j=13;j<=NF;j++) if($j ~ /^cg:Z:/){ci=j; break}
-          if(ci==0){print; next}
-          c=substr($ci,6); n=0; rest=c
-          while(match(rest,/^[0-9]+[=XID]/)){ t=substr(rest,RSTART,RLENGTH); n++;
-            L[n]=substr(t,1,length(t)-1)+0; O[n]=substr(t,length(t),1); rest=substr(rest,RLENGTH+1) }
-          qs=$3; qe=$4; ts=$8; te=$9; lo=1; hi=n
-          while(lo<=hi && (O[lo]=="I"||O[lo]=="D")){ if(O[lo]=="I") qs+=L[lo]; else ts+=L[lo]; lo++ }
-          while(hi>=lo && (O[hi]=="I"||O[hi]=="D")){ if(O[hi]=="I") qe-=L[hi]; else te-=L[hi]; hi-- }
-          nc=""; for(k=lo;k<=hi;k++) nc=nc L[k] O[k]
-          $3=qs; $4=qe; $8=ts; $9=te; $ci="cg:Z:" nc
-          delete L; delete O; print }' "$input_paf" > "$job_scratch/$prefix.paf"
-        $FAtoGDB "$seq_file" "$job_scratch/$prefix.1gdb" > "$job_scratch/gdb.log" 2>&1
+    if [ "$tp_type" = "fastga-native" ] || [ "$tp_type" = "fastga-native-nodiff" ]; then
+        # 1aln no-diff: PAFtoALN -N omits the per-window diff (X) records (ALNtoPAF -x re-derives them).
+        nflag=""; [ "$tp_type" = "fastga-native-nodiff" ] && nflag="-N"
+
+        # Copy it under $prefix.paf so PAFtoALN writes the .1aln next to it.
+        cp "$input_paf" "$job_scratch/$prefix.paf"
+        $FAtoGDB "$seq_file" "$job_scratch/$prefix.1gdb" > "$job_scratch/gdb.log" 2>&1 || { guard "FAtoGDB" $? "$job_scratch/gdb.log"; }
 
         # encode (PAFtoALN); both sources are the single .fa GDB, so all names resolve
         enc_rt_sum=0; enc_mem_sum=0
         for _rep in $(seq 1 $num_repeats); do
             rm -f "$job_scratch/$prefix.1aln"
-            \time -v $PAFtoALN -T$FASTGA_THREADS "$job_scratch/$prefix.paf" "$job_scratch/$prefix.1gdb" "$job_scratch/$prefix.1gdb" \
-                > /dev/null 2> "$encode_log"
+            \time -v $PAFtoALN $nflag -T$FASTGA_THREADS "$job_scratch/$prefix.paf" "$job_scratch/$prefix.1gdb" "$job_scratch/$prefix.1gdb" \
+                > /dev/null 2> "$encode_log" || { guard "PAFtoALN" $? "$encode_log"; }
             enc_rt_sum=$(echo "$enc_rt_sum + $(parse_time_log "$encode_log")" | bc -l)
             enc_mem_sum=$((enc_mem_sum + $(parse_memory_log "$encode_log")))
         done
@@ -344,7 +366,7 @@ run_benchmark() {
         # decode (ALNtoPAF -x reconstructs the optimal X/= CIGAR)
         dec_rt_sum=0; dec_mem_sum=0
         for _rep in $(seq 1 $num_repeats); do
-            \time -v $ALNtoPAF -x -T$FASTGA_THREADS "$job_scratch/$prefix.1aln" > "$decode_paf" 2> "$decode_log"
+            ( cd "$job_scratch" && \time -v $ALNtoPAF -x -T$FASTGA_THREADS "$job_scratch/$prefix.1aln" > "$decode_paf" 2> "$decode_log" ) || { guard "ALNtoPAF" $? "$decode_log"; }
             dec_rt_sum=$(echo "$dec_rt_sum + $(parse_time_log "$decode_log")" | bc -l)
             dec_mem_sum=$((dec_mem_sum + $(parse_memory_log "$decode_log")))
         done
@@ -356,7 +378,7 @@ run_benchmark() {
         correct="false"
         [ "$n_in" = "$n_out" ] && $pafcheck --paf "$decode_paf" --sequence-files "$seq_file" --threads $(nproc) > /dev/null 2>&1 && correct="true"
 
-        echo -e "$l\t$e\t$tp_type\t$cm\t$mc\t$memory_mode\t$size_cigar\t$size_cigar_bgzip\t$bgzip_decomp_runtime\t$bgzip_decomp_memory\t$align_runtime\t$align_memory\t0\t$num_1aln_tp\t$encode_runtime\t$encode_memory\t$size_1aln\t0\t0\t0\t0\t$correct\t$decode_runtime\t$decode_memory\t$decode_runtime\t$decode_memory" > "$TMP_DIR/$full_prefix.result.tsv"
+        echo -e "$l\t$e\t$tp_type\t$cm\t$mc\t$memory_mode\t$size_cigar\t$size_cigar_bgzip\t$bgzip_decomp_runtime\t$bgzip_decomp_memory\t$align_runtime\t$align_memory\t0\t$num_1aln_tp\t$encode_runtime\t$encode_memory\t$size_1aln\t0\t0\t0\t0\t$correct\t$decode_runtime\t$decode_memory\t$n_out\tNA\tNA\tNA\t$n_in" > "$TMP_DIR/$full_prefix.result.tsv"
         mv "$job_scratch/$prefix.1aln" "$dir_base/simulated-data/compress/$full_prefix.1aln"
         rm -f "$job_scratch/$prefix.paf" "$job_scratch/$prefix.1gdb" "$job_scratch/.$prefix.bps" "$decode_paf"
         echo "Completed: $full_prefix"
@@ -373,7 +395,7 @@ run_benchmark() {
             --max-complexity $mc \
             $cmd_args \
             -t $(nproc) \
-            > "$tp_paf_full" 2> "$encode_log"
+            > "$tp_paf_full" 2> "$encode_log" || { guard "encode" $? "$encode_log"; }
         _rep_runtime=$(parse_time_log "$encode_log")
         _rep_memory=$(parse_memory_log "$encode_log")
         encode_runtime_sum=$(echo "$encode_runtime_sum + $_rep_runtime" | bc -l)
@@ -411,7 +433,7 @@ run_benchmark() {
             $strategy_args \
             --distance edit \
             -t $(nproc) \
-            2> "$compress_log"
+            2> "$compress_log" || { guard "compress" $? "$compress_log"; }
         _rep_runtime=$(parse_time_log "$compress_log")
         _rep_memory=$(parse_memory_log "$compress_log")
         compress_runtime_sum=$(echo "$compress_runtime_sum + $_rep_runtime" | bc -l)
@@ -428,7 +450,7 @@ run_benchmark() {
         \time -v $cigzip decompress \
             --input "$tpa_file" \
             --output "$decomp_paf" \
-            2> "$decompress_log"
+            2> "$decompress_log" || { guard "decompress" $? "$decompress_log"; }
         _rep_runtime=$(parse_time_log "$decompress_log")
         _rep_memory=$(parse_memory_log "$decompress_log")
         decompress_runtime_sum=$(echo "$decompress_runtime_sum + $_rep_runtime" | bc -l)
@@ -441,7 +463,7 @@ run_benchmark() {
     diff_count=$(diff "$tp_paf" "$decomp_paf" | wc -l)
     [ "$diff_count" -eq 0 ] && decompress_correct="true" || decompress_correct="false"
     
-    # --- DECODE (--no-banded) ---
+    # --- DECODE (banded) ---
     decode_runtime_sum=0
     decode_memory_sum=0
     for _rep in $(seq 1 $num_repeats); do
@@ -453,9 +475,8 @@ run_benchmark() {
             $cmd_args \
             --distance edit \
             --memory-mode $memory_mode \
-            --no-banded \
             -t $(nproc) \
-            > "$decode_paf" 2> "$decode_log"
+            > "$decode_paf" 2> "$decode_log" || { guard "decode" $? "$decode_log"; }
         _rep_runtime=$(parse_time_log "$decode_log")
         _rep_memory=$(parse_memory_log "$decode_log")
         decode_runtime_sum=$(echo "$decode_runtime_sum + $_rep_runtime" | bc -l)
@@ -463,31 +484,29 @@ run_benchmark() {
     done
     decode_runtime=$(echo "scale=6; $decode_runtime_sum / $num_repeats" | bc -l | sed 's/^\./0./')
     decode_memory=$((decode_memory_sum / num_repeats))
-    
-    # --- DECODE (banded, default) ---
-    decode_heur_runtime_sum=0
-    decode_heur_memory_sum=0
-    for _rep in $(seq 1 $num_repeats); do
-        \time -v $cigzip decode \
-            --paf "$decomp_paf" \
-            --sequence-files "$seq_file" \
-            --type $tp_type \
-            --max-complexity $mc \
-            $cmd_args \
-            --distance edit \
-            --memory-mode $memory_mode \
-            -t $(nproc) \
-            > "$decode_heur_paf" 2> "$decode_heur_log"
-        _rep_runtime=$(parse_time_log "$decode_heur_log")
-        _rep_memory=$(parse_memory_log "$decode_heur_log")
-        decode_heur_runtime_sum=$(echo "$decode_heur_runtime_sum + $_rep_runtime" | bc -l)
-        decode_heur_memory_sum=$((decode_heur_memory_sum + _rep_memory))
-    done
-    decode_heur_runtime=$(echo "scale=6; $decode_heur_runtime_sum / $num_repeats" | bc -l | sed 's/^\./0./')
-    decode_heur_memory=$((decode_heur_memory_sum / num_repeats))
-    
+
+    # Reconstruction score check
+    sc_extract='{ s=""; for(i=13;i<=NF;i++) if($i~/^sc:i:/){s=substr($i,6)+0; break} if(s!="") print $1"|"$6"\t"s }'
+    score_orig="$TMP_DIR/orig_score.${l}_${e}.sc"
+    if [ ! -s "$score_orig" ]; then
+        tmp_orig="$TMP_DIR/orig_score.$full_prefix.tmp.sc"
+        $cigzip encode --paf "$input_paf" --type standard --complexity-metric edit-distance \
+            --max-complexity 9999999 --distance edit -t $(nproc) 2>/dev/null \
+            | awk -F'\t' "$sc_extract" | sort > "$tmp_orig"
+        mv -f "$tmp_orig" "$score_orig"
+    fi
+    score_recon="$job_scratch/$full_prefix.recon.sc"
+    $cigzip encode --paf "$decode_paf" --type standard --complexity-metric edit-distance \
+        --max-complexity 9999999 --distance edit -t $(nproc) 2>/dev/null \
+        | awk -F'\t' "$sc_extract" | sort > "$score_recon"
+    read num_output_aln score_identical score_improved score_degraded <<< "$(
+        join -t$'\t' "$score_orig" "$score_recon" \
+        | awk -F'\t' '{ n++; if($3==$2) id++; else if($3>$2) imp++; else deg++ } END { print n+0, id+0, imp+0, deg+0 }')"
+    num_input_aln=$(grep -c . "$input_paf")
+    rm -f "$score_recon"
+
     # --- WRITE RESULT TO TEMP FILE ---
-    echo -e "$l\t$e\t$tp_type\t$cm\t$mc\t$memory_mode\t$size_cigar\t$size_cigar_bgzip\t$bgzip_decomp_runtime\t$bgzip_decomp_memory\t$align_runtime\t$align_memory\t$size_tp\t$num_tps\t$encode_runtime\t$encode_memory\t$size_tpa\t$compress_runtime\t$compress_memory\t$decompress_runtime\t$decompress_memory\t$decompress_correct\t$decode_runtime\t$decode_memory\t$decode_heur_runtime\t$decode_heur_memory" > "$TMP_DIR/$full_prefix.result.tsv"
+    echo -e "$l\t$e\t$tp_type\t$cm\t$mc\t$memory_mode\t$size_cigar\t$size_cigar_bgzip\t$bgzip_decomp_runtime\t$bgzip_decomp_memory\t$align_runtime\t$align_memory\t$size_tp\t$num_tps\t$encode_runtime\t$encode_memory\t$size_tpa\t$compress_runtime\t$compress_memory\t$decompress_runtime\t$decompress_memory\t$decompress_correct\t$decode_runtime\t$decode_memory\t$num_output_aln\t$score_identical\t$score_improved\t$score_degraded\t$num_input_aln" > "$TMP_DIR/$full_prefix.result.tsv"
     
     # Remove full PAF (keep only subsetted version)
     rm -f "$tp_paf_full"
@@ -496,36 +515,34 @@ run_benchmark() {
 }
 
 export -f run_benchmark
-export scratch_dir   # parallel-spawned workers need this in their environment (job_scratch uses it)
+export scratch_dir   # parallel-spawned workers need these in their environment (job_scratch uses them)
 export FAtoGDB PAFtoALN ALNtoPAF ONEview pafcheck FASTGA_THREADS   # used by the fastga-native (FL-TP FASTGA) branch
 
 # Generate all job parameters
 > "$TMP_DIR/jobs.txt"
 for l in 100 1000 10000 100000; do
   for e in 0.001 0.01 0.05 0.10 0.20; do
-    # Look up precomputed values
-    size_cigar=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f2)
-    size_cigar_bgzip=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f3)
-    bgzip_decomp_runtime=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f4)
-    bgzip_decomp_memory=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f5)
-    align_runtime=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f6)
-    align_memory=$(grep "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt" | cut -d' ' -f7)
+    # Look up precomputed values. Read the FIRST matching line only and let `read` split on whitespace,
+    # so no embedded newline can leak into a jobs.txt line even if a stale duplicate key ever remained.
+    read _ size_cigar size_cigar_bgzip bgzip_decomp_runtime bgzip_decomp_memory align_runtime align_memory \
+        < <(grep -m1 "^${l}_${e} " "$TMP_DIR/cigar_sizes.txt")
+    if [ -z "$size_cigar" ]; then
+        echo "ERROR: no precomputed cigar size for ${l}_${e}; aborting run" >&2; exit 1
+    fi
 
     # Per-condition bootstrap warm-up
     echo "$l $e standard edit-distance 16 high $dir_base $cigzip $size_cigar $size_cigar_bgzip $bgzip_decomp_runtime $bgzip_decomp_memory $align_runtime $align_memory $TMP_DIR" >> "$TMP_DIR/jobs.txt"
 
-    # "FL-TP" = cigzip fastga across trace spacings (l); "FL-TP FASTGA" = PAFtoALN/ALNtoPAF, l=100
-    # only (handled by the fastga-native branch in run_benchmark). EB-TP/DB-TP sweep delta/b 32..1024.
-    for tp_type in fastga fastga-native standard; do
-      if [ "$tp_type" = "fastga" ]; then
+    for tp_type in standard fastga fastga-no-diff fastga-native fastga-native-nodiff; do
+      if [ "$tp_type" = "fastga" ] || [ "$tp_type" = "fastga-no-diff" ]; then
           cm_list="none"
-          mc_list="100 200 300 500 1000 2000"
-      elif [ "$tp_type" = "fastga-native" ]; then
+          mc_list="100 200 300 400 500 1000 1500 2000 2500 3000"
+      elif [ "$tp_type" = "fastga-native" ] || [ "$tp_type" = "fastga-native-nodiff" ]; then
           cm_list="none"
           mc_list="100"
       else
           cm_list="edit-distance diagonal-distance"
-          mc_list="32 64 128 256 512 1024"
+          mc_list="16 32 48 64 80 96 112 128 256 512 1024"
       fi
 
       for cm in $cm_list; do
@@ -542,8 +559,9 @@ done
 # Create scratch jobs directory
 mkdir -p $scratch_dir/jobs
 
-# Run in parallel (adjust -j for number of concurrent jobs)
-parallel -j 1 --colsep ' ' run_benchmark {1} {2} {3} {4} {5} {6} {7} {8} {9} {10} {11} {12} {13} {14} {15} < "$TMP_DIR/jobs.txt"
+# Run in parallel (adjust -j for number of concurrent jobs).
+parallel -j 1 --halt now,fail=1 --colsep ' ' run_benchmark {1} {2} {3} {4} {5} {6} {7} {8} {9} {10} {11} {12} {13} {14} {15} < "$TMP_DIR/jobs.txt" \
+    || { echo "ERROR: a benchmark job crashed; aborting run (no results merged)" >&2; exit 1; }
 
 # --- MOVE ALL OUTPUT FILES FROM SCRATCH TO FINAL DESTINATIONS ---
 echo "Moving output files to final destinations..."
@@ -576,7 +594,7 @@ for job_dir in $scratch_dir/jobs/*/; do
 done
 
 # Header
-echo -e "l\te\ttp_type\tcm\tmc\tmemory_mode\tsize_cigar_bytes\tsize_cigar_bgzip_bytes\tbgzip_decompress_runtime_sec\tbgzip_decompress_memory_kb\talign_runtime_sec\talign_memory_kb\tsize_tp_bytes\tnum_tracepoints\tencode_runtime_sec\tencode_memory_kb\tsize_tpa_bytes\tcompress_runtime_sec\tcompress_memory_kb\tdecompress_runtime_sec\tdecompress_memory_kb\tdecompress_correct\tdecode_runtime_sec\tdecode_memory_kb\tdecode_heuristic_runtime_sec\tdecode_heuristic_memory_kb" > "$REPORT"
+echo -e "l\te\ttp_type\tcm\tmc\tmemory_mode\tsize_cigar_bytes\tsize_cigar_bgzip_bytes\tbgzip_decompress_runtime_sec\tbgzip_decompress_memory_kb\talign_runtime_sec\talign_memory_kb\tsize_tp_bytes\tnum_tracepoints\tencode_runtime_sec\tencode_memory_kb\tsize_tpa_bytes\tcompress_runtime_sec\tcompress_memory_kb\tdecompress_runtime_sec\tdecompress_memory_kb\tdecompress_correct\tdecode_runtime_sec\tdecode_memory_kb\tnum_output_alignments\tscore_identical\tscore_improved\tscore_degraded\tnum_input_alignments" > "$REPORT"
 
 # Merge all results into final report (sorted for reproducibility)
 cat "$TMP_DIR"/*.result.tsv | sort -t$'\t' -k1,1n -k2,2n -k3,3 -k4,4 -k5,5n -k6,6 >> "$REPORT"
@@ -587,6 +605,7 @@ rm -rf $scratch_dir/jobs
 rm -rf $scratch_dir/staged
 
 echo "Benchmark complete. Results in: $REPORT"
+)
 ```
 
 ### Indel-skewed check
