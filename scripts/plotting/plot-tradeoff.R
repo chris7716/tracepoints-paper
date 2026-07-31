@@ -50,11 +50,12 @@ mk_labels <- function(d) d %>% mutate(
 
 # Tracepoint parameter sweeps. recon_time = stored-format -> PAF (decompress + decode).
 # Drop the standard edit-distance mc=16 bootstrap warm-up rows and the single-point
-# FASTGA .1aln reference (l=100 only).
+# FASTGA .1aln reference (l=100 only). Cap the FL-TP trace spacing at l=2000.
 tp <- data %>%
   filter(decompress_correct == TRUE | decompress_correct == "true") %>%
   filter(!(tp_type == "standard" & mc == 16)) %>%
   filter(tp_type != "fastga-native") %>%
+  filter(!(tp_type %in% c("fastga", "fastga-no-diff") & mc > 2000)) %>%
   mutate(method = case_when(
            tp_type == "fastga"         ~ "FL-TP TPA",
            tp_type == "fastga-no-diff" ~ "FL-TP TPA nd",

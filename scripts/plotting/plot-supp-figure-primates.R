@@ -15,11 +15,11 @@ fig_dir <- Sys.getenv("TRACEPOINTS_FIG_DIR", unset = "paper/figures")
 # Read primate benchmark data
 data <- read_tsv(file.path(data_dir, "real-data", "t2t-ape-pangenome.benchmark.results.tsv"), show_col_types = FALSE)
 
-# Keep only the thresholds shown in the figure (EB-TP delta=32,64,128; DB-TP b=32).
-# The benchmark TSV also contains additional thresholds (b=16,64; delta=16,256).
+# Keep the thresholds shown in the figure (EB-TP delta=32,64,128,256; DB-TP b=32,64,128,256).
+# The benchmark TSV also contains an additional threshold (mc=16).
 data <- data %>%
   filter((cm == "edit-distance" & mc %in% c(32, 64, 128, 256)) |
-         (cm == "diagonal-distance" & mc %in% c(32, 64)))
+         (cm == "diagonal-distance" & mc %in% c(32, 64, 128, 256)))
 
 # Process data
 df <- data %>%
@@ -75,7 +75,7 @@ df <- df %>%
     target_label = factor(target_labels[as.character(target)], levels = target_labels),
     method = factor(method, levels = c(
       "EB-TP TPA (\u03b4=32)", "EB-TP TPA (\u03b4=64)", "EB-TP TPA (\u03b4=128)", "EB-TP TPA (\u03b4=256)",
-      "DB-TP TPA (b=32)", "DB-TP TPA (b=64)"
+      "DB-TP TPA (b=32)", "DB-TP TPA (b=64)", "DB-TP TPA (b=128)", "DB-TP TPA (b=256)"
     )),
     species = factor(species, levels = c("Human", "Chimpanzee", "Bonobo", "Gorilla", "B. Orangutan", "S. Orangutan", "Siamang"))
   )
@@ -99,9 +99,10 @@ common_theme <- theme_bw(base_size = 15) +
 color_scale <- scale_fill_manual(
   values = c(
     "EB-TP TPA (\u03b4=32)" = "#d95f02", "EB-TP TPA (\u03b4=64)" = "#e6950a", "EB-TP TPA (\u03b4=128)" = "#f0c050", "EB-TP TPA (\u03b4=256)" = "#fee391",
-    "DB-TP TPA (b=32)" = "#1b5e9b", "DB-TP TPA (b=64)" = "#6baed6"
+    "DB-TP TPA (b=32)" = "#08519c", "DB-TP TPA (b=64)" = "#3182bd", "DB-TP TPA (b=128)" = "#6baed6", "DB-TP TPA (b=256)" = "#bdd7e7"
   ),
-  name = "Method"
+  name = "Method",
+  guide = guide_legend(nrow = 2, byrow = TRUE)
 )
 
 # Species group separators (vertical lines between groups)
@@ -192,6 +193,8 @@ p_combined_alllog <- p_combined_alllog +
   theme(plot.tag = element_text(size = 16, face = "bold"))
 ggsave(file.path(fig_dir, "figS4_primate_performance_alllog.png"),
        p_combined_alllog, width = 12, height = 8, dpi = 300, bg = "white")
+ggsave(file.path(fig_dir, "figS4_primate_performance_alllog.pdf"),
+       p_combined_alllog, width = 12, height = 8, bg = "white", device = cairo_pdf)
 
 message("Figure saved: figS4_primate_performance.png/pdf")
 
