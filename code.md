@@ -91,8 +91,8 @@ TMP_DIR="$scratch_dir/benchmark_tmp"
 # Empty-after-trim alignments are dropped.
 stage_inputs(){
     mkdir -p "$3"
-    [ -f "$3/$4.fa" ]  || cp "$2" "$3/$4.fa"                  # canonical sequences (unchanged)
-    [ -f "$3/$4.paf" ] || awk 'BEGIN{FS=OFS="\t"}
+    [ -f "$3/$4.fa" ]  || { cp "$2" "$3/$4.fa.tmp" && mv "$3/$4.fa.tmp" "$3/$4.fa"; }
+    [ -f "$3/$4.paf" ] || { awk 'BEGIN{FS=OFS="\t"}
         { ci=0; for(j=13;j<=NF;j++) if($j ~ /^cg:Z:/){ci=j; break}
           if(ci==0){print; next}
           # rev: on - strand the query is reverse-complemented, so a query-consuming (I) op at the START
@@ -108,7 +108,7 @@ stage_inputs(){
             if(last=="I"){ if(rev) qs+=len; else qe-=len } else te-=len; db+=length(m) }
           if(df||db){ c=substr(c,df+1,L-df-db); $3=qs;$4=qe;$8=ts;$9=te; $ci="cg:Z:" c }
           if(substr($ci,6)==""){ next }                       # drop any alignment that trims to empty
-          print }' "$1" > "$3/$4.paf"
+          print }' "$1" > "$3/$4.paf.tmp" && mv "$3/$4.paf.tmp" "$3/$4.paf"; }
 }
 export -f stage_inputs
 
@@ -846,7 +846,21 @@ MC_LIST="16 32 48 64 80 96 128 256"      # EB-TP/DB-TP max-complexity values (16
 FASTGA_MC_LIST="500 1000 2000"  # FL-TP trace spacings (fastga scaling)
 TMP_DIR="$scratch_dir/real_benchmark_tmp"
 mkdir -p $TMP_DIR
-HEADER="dataset\tpaf_file\tcm\tmc\tdecode_mode\tsize_cigar_bytes\tsize_tp_bytes\tnum_tracepoints\tsize_tpa_bytes\tencode_runtime_sec\tencode_memory_kb\tcompress_runtime_sec\tcompress_memory_kb\tdecompress_runtime_sec\tdecompress_memory_kb\tdecode_runtime_sec\tdecode_memory_kb\tnum_alignments\tscore_identical\tscore_improved\tscore_degraded"
+HEADER="dataset\tpaf_file\tcm\tmc\tdecode_mode\tsize_cigar_bytes\tsize_tp_bytes\tnum_tracepoints\tsize_tpa_bytes\tencode_runtime_sec\tencode_memory_kb\tcompress_runtime_sec\tcompress_memory_kb\tdecompress_runtime_sec\tdecompress_memory_kb\tdecode_runtime_sec\tdecode_memory_kb\tnum_output_alignments\tscore_identical\tscore_improved\tscore_degraded\tnum_input_alignments\tdistance"
+
+# Resume helper: a per-iteration result row "went fine" iff it has all 23 columns, the decode ran
+# (decode_runtime col16 != NA), and it has a valid output count.
+iteration_ok() {
+    awk -F'\t' 'END{
+        if (NF!=23) exit 1
+        if ($16=="" || $16=="NA") exit 1                       # decode ran
+        if ($18=="" || $18=="NA" || $18+0<=0) exit 1           # has output
+        if ($22=="" || $22=="NA") exit 1
+        if ($3=="edit-distance" || $3=="diagonal-distance") { if ($18+0 != $22+0) exit 1 }  # EB/DB: exact
+        else { if ($18+0 < $22+0) exit 1 }                     # FL-TP: gap-splits allow more outputs
+        exit 0
+    }' "$1"
+}
 
 # Export benchmark function
 run_benchmark_real() {
@@ -858,12 +872,23 @@ run_benchmark_real() {
     local cigzip="$6"
     local TMP_DIR="$7"
     local MC="$8"
+    local DIST="${9:-gap-affine2p}"   # reconstruction distance model: edit | gap-affine2p (recorded in the output)
 
     paf_name=$(basename "$input_paf" .paf.gz)
     paf_name=$(basename "$paf_name" .paf)  # Handle both .paf.gz and .paf
 
-    prefix="$paf_name.$cm.$MC"
+    prefix="$paf_name.$cm.$MC.$DIST"
     job_scratch="$scratch_dir/real_jobs/$prefix"
+
+    # --- Resume ---
+    # PTe mc=16 bootstrap warm-up is never checkpointed, so every re-run repeats it first
+    ckpt_dir="$TMP_DIR/$(echo "$BENCH_METHODS" | tr -s ' ' '-')${RUN_TAG:+-$RUN_TAG}"; mkdir -p "$ckpt_dir"
+    ckpt="$ckpt_dir/$prefix.result.tsv"
+    if [ "$MC" != "16" ] && [ -s "$ckpt" ] && iteration_ok "$ckpt"; then
+        echo "SKIP (already done): $dataset/$paf_name ($cm, mc=$MC)"
+        return 0
+    fi
+    [ "$MC" != "16" ] && rm -f "$ckpt"   # clear a stale NA/partial checkpoint before redoing
     mkdir -p "$job_scratch"
 
     # File paths
@@ -921,30 +946,116 @@ run_benchmark_real() {
     # Compute CIGAR size (12 cols + cg:Z: only - excludes other tags for fair comparison)
     size_cigar=$(awk "$extract_cg_cols" "$input_paf" | wc -c)
 
+    # Number of INPUT alignments
+    num_input_aln=$(grep -c . "$input_paf")
+
     # Skip empty PAF files
     if [[ "$size_cigar" -lt 10 ]]; then
         echo "Skipping empty PAF: $dataset/$paf_name ($cm, mc=$MC)"
         rm -rf "$job_scratch"
         return 0
     fi
+    # PAFtoALN reuses the per-dataset FASTGA GDB staged before the main loop ($scratch_dir/<dataset>-gdb/<dataset>.1gdb).
+    if [ "$cm" = "fastga-native" ] || [ "$cm" = "fastga-native-nodiff" ]; then
+        local gdb="$scratch_dir/${dataset}-gdb/${dataset}.1gdb"
+        # FL-TP 1aln reconstruction (ALNtoPAF) is edit-based: score orig/recon under edit-distance to match.
+        local dist_args="--distance edit"
+        local nflag=""; [ "$cm" = "fastga-native-nodiff" ] && nflag="-N"
+        local fixed_paf="$job_scratch/$prefix.fixed.paf"
 
+        # Preserve failure logs before the per-job dir is rm'd, so PAFtoALN/ALNtoPAF failures stay
+        # debuggable (kept on moosefs, survives the scratch cleanup). Rerun them with
+        # scripts/rerun_fltp1aln_failures.sh. Without this, the only trace of a failure is decode=NA.
+        local fail_log_dir="$dir_base/failed_logs/$prefix"
+        keep_fail_logs(){ mkdir -p "$fail_log_dir"; for L in "$encode_log" "$decode_log"; do [ -s "$L" ] && cp "$L" "$fail_log_dir/"; done; echo "  (kept failure logs in $fail_log_dir)" >&2; }
+
+        # PAFtoALN names the output after the INPUT basename, i.e. "$prefix.fixed.1aln"
+        # (not "$prefix.1aln"). Reading the wrong name silently yielded empty size/0 tps.
+        local aln_file="$job_scratch/$prefix.fixed.1aln"
+
+        if [ ! -f "$gdb" ]; then
+            echo "ERROR: FASTGA GDB not found at $gdb (build it before the loop)" >&2
+            rm -rf "$job_scratch"; return 1
+        fi
+
+        # The input PAF is already terminal-indel-trimmed and degenerate-filtered by the caller
+        ln -sf "$input_paf" "$fixed_paf"
+
+        # encode: PAFtoALN -> .1aln (source and target GDB are the same combined dataset GDB).
+        # Retry: PAFtoALN -T96 has a rare, load-dependent heap-corruption crash (SIGABRT,
+        # "corrupted double-linked list") that clears on re-run; a few attempts make it a non-event.
+        pafaln_ok=0
+        for _try in 1 2 3; do
+            \time -v $PAFtoALN $nflag -T$FASTGA_THREADS "$fixed_paf" "$gdb" "$gdb" > /dev/null 2> "$encode_log" \
+                && { pafaln_ok=1; break; }
+            echo "WARN: PAFtoALN attempt $_try failed for $dataset/$paf_name (mc=$MC): $(tail -1 "$encode_log")" >&2
+        done
+        [ "$pafaln_ok" -eq 1 ] \
+            || { echo "ERROR: PAFtoALN failed for $dataset/$paf_name (mc=$MC) after 3 attempts: $(tail -1 "$encode_log")" >&2; keep_fail_logs; rm -rf "$job_scratch"; return 1; }
+        encode_runtime=$(parse_time_log "$encode_log"); encode_memory=$(parse_memory_log "$encode_log")
+        size_1aln=$(wc -c < "$aln_file")
+        num_tps=$($ONEview "$aln_file" 2>/dev/null | awk '$1=="T"{s+=$2} END{print s+0}')
+
+        # decode: ALNtoPAF -x reconstructs the optimal =/X CIGAR.
+        # Retry: like PAFtoALN, ALNtoPAF -x -T96 can hit a rare, load-dependent transient failure
+        # that clears on re-run; a few attempts make it a non-event. Any residual deterministic
+        # failure (should be none after the FASTGA fork fixes) still falls through to decode=NA.
+        decode_status=1
+        for _try in 1 2 3; do
+            decode_status=0
+            ( cd "$job_scratch" && \time -v $ALNtoPAF -x -T$FASTGA_THREADS "$aln_file" > "$decode_paf" 2> "$decode_log" ) || decode_status=$?
+            [ "$decode_status" -eq 0 ] && break
+            echo "WARN: ALNtoPAF -x attempt $_try failed (exit $decode_status) for $dataset/$paf_name (mc=$MC): $(tail -1 "$decode_log")" >&2
+        done
+        if [ "$decode_status" -eq 0 ]; then
+            decode_runtime=$(parse_time_log "$decode_log"); decode_memory=$(parse_memory_log "$decode_log")
+        else
+            echo "WARN: ALNtoPAF -x failed (exit $decode_status) for $dataset/$paf_name (mc=$MC) after 3 attempts: $(tail -1 "$decode_log"); recording size only (decode=NA)" >&2
+            decode_runtime=NA; decode_memory=NA
+            keep_fail_logs   # preserve encode.log/decode.log before the per-job rm below
+        fi
+
+        # Score-preservation is not evaluated for FL-TP 1aln.
+        num_aln=$(grep -c . "$fixed_paf")
+        score_identical=NA; score_improved=NA; score_degraded=NA
+
+        # No separate tp stream or compression: the .1aln is the stored file.
+        echo -e "$dataset\t$paf_name\t$cm\t$MC\theuristic\t$size_cigar\t$size_1aln\t$num_tps\t$size_1aln\t$encode_runtime\t$encode_memory\t0\t0\t0\t0\t$decode_runtime\t$decode_memory\t$num_aln\t$score_identical\t$score_improved\t$score_degraded\t$num_input_aln\t$DIST" > "$ckpt"
+
+        out_dir="$dir_base/$dataset"; mkdir -p "$out_dir/encode" "$out_dir/decode"
+        [ -s "$encode_log" ] && cp "$encode_log" "$out_dir/encode/$prefix.log"
+        [ -s "$decode_log" ] && cp "$decode_log" "$out_dir/decode/$prefix.log"
+        rm -rf "$job_scratch"
+        echo "Completed (1aln$nflag): $dataset/$paf_name (mc=$MC)"
+        return 0
+    fi
+
+    if [ "$DIST" = "gap-affine2p" ]; then
+        dist_args="--distance gap-affine2p --penalties 5,8,2,24,1"
+    else
+        dist_args="--distance edit"
+    fi
+    fastga_contigs_args=""
     if [ "$cm" = "fastga" ]; then
-        tp_type="fastga";  cm_args="";                         strategy_args="--strategy rice-nocomp;rice-nocomp"
+        tp_type="fastga";  cm_args="";                         strategy_args="--strategy elias-fano-nocomp;huffman-nocomp"
+        fastga_contigs_args="--fastga-contigs $scratch_dir/${dataset}-gdb/${dataset}.contigs.tsv"
+    elif [ "$cm" = "fastga-no-diff" ]; then
+        tp_type="fastga-no-diff"; cm_args="";                  strategy_args="--strategy huffman-nocomp"
+        fastga_contigs_args="--fastga-contigs $scratch_dir/${dataset}-gdb/${dataset}.contigs.tsv"
     elif [ "$cm" = "edit-distance" ]; then
         tp_type="standard"; cm_args="--complexity-metric $cm"; strategy_args="--strategy rice-nocomp;2d-delta-nocomp"
     else  # diagonal-distance
         tp_type="standard"; cm_args="--complexity-metric $cm"; strategy_args="--strategy raw-nocomp;2d-delta-nocomp"
     fi
-    dist_args="--distance gap-affine2p --penalties 5,8,2,24,1"
 
-    mem_mode="high"
-    # [ "$cm" = "diagonal-distance" ] && [ "$MC" -gt 64 ] && mem_mode="low"
+    mem_mode="adaptive"
 
     # --- ENCODE ---
     \time -v $cigzip encode \
         --paf "$input_paf" \
         --type $tp_type \
         $cm_args \
+        $fastga_contigs_args \
         --max-complexity $MC \
         $dist_args \
         -t $(nproc) \
@@ -988,6 +1099,7 @@ run_benchmark_real() {
     \time -v $cigzip decompress \
         --input "$tpa_file" \
         --output "$decomp_paf" \
+        --threads $(nproc) \
         2> "$decompress_log"
 
     decompress_runtime=$(parse_time_log "$decompress_log")
@@ -995,37 +1107,57 @@ run_benchmark_real() {
     rm -f "$tpa_file"
 
     # --- DECODE (banded, default) ---
+    local gdb_seq="$scratch_dir/${dataset}-gdb/${dataset}.1gdb"
+    decode_status=0
     \time -v $cigzip decode \
         --paf "$decomp_paf" \
-        --sequence-list $seq_files \
+        --sequence-files "$gdb_seq" \
         --type $tp_type \
         $cm_args \
         --max-complexity $MC \
         $dist_args \
         --memory-mode $mem_mode \
         -t $(nproc) \
-        > "$decode_paf" 2> "$decode_log"
+        > "$decode_paf" 2> "$decode_log" || decode_status=$?
 
     decode_runtime=$(parse_time_log "$decode_log")
     decode_memory=$(parse_memory_log "$decode_log")
     rm -f "$decomp_paf"
 
+    if [ "$decode_status" -ne 0 ]; then
+        out_dir="$dir_base/$dataset"
+        mkdir -p "$out_dir/decode"
+        [ -f "$decode_log" ] && cp "$decode_log" "$out_dir/decode/$prefix.FAILED.log"
+        echo "ERROR: cigzip decode failed (exit $decode_status) for $dataset/$paf_name ($cm, mc=$MC); recording decode=NA (log: $out_dir/decode/$prefix.FAILED.log)" >&2
+        echo -e "$dataset\t$paf_name\t$cm\t$MC\theuristic\t$size_cigar\t$size_tp\t$num_tps\t$size_tpa\t$encode_runtime\t$encode_memory\t$compress_runtime\t$compress_memory\t$decompress_runtime\t$decompress_memory\tNA\tNA\tNA\tNA\tNA\tNA\t$num_input_aln\t$DIST" > "$ckpt"
+        rm -rf "$job_scratch"
+        return 0
+    fi
+
+    # Score preservation is not a guaranteed property and is not reported for FL-TP.
+    if [ "$cm" = "fastga" ] || [ "$cm" = "fastga-no-diff" ]; then
+        num_aln=$(grep -c . "$decode_paf")
+        score_identical=NA; score_improved=NA; score_degraded=NA
+        rm -f "$tp_paf_full" "$decode_paf"
+    else
     # Compare scores: original (from tp_paf_full) vs reconstructed (from decode_paf)
     # Sort both files by first 9 columns to ensure matching alignment order
     # (multi-threaded output may not preserve input order)
     # Lower score = better alignment (penalties are negative)
     # Also save original input alignments (with CIGAR) that lead to degraded scores
+    sorted_input="$job_scratch/sorted_input.paf"
     sorted_encoded="$job_scratch/sorted_encoded.paf"
     sorted_decode="$job_scratch/sorted_decode.paf"
 
-    # Sort encoded and decoded PAFs (input already pre-sorted by caller)
+    # Sort all three by the first 9 cols so paste lines up the same alignment across files.
+    sort -T /scratch --parallel=$(nproc) -t$'\t' -k1,1 -k2,2n -k3,3n -k4,4n -k5,5 -k6,6 -k7,7n -k8,8n -k9,9n "$input_paf" > "$sorted_input" &
     sort -T /scratch --parallel=$(nproc) -t$'\t' -k1,1 -k2,2n -k3,3n -k4,4n -k5,5 -k6,6 -k7,7n -k8,8n -k9,9n "$tp_paf_full" > "$sorted_encoded" &
     sort -T /scratch --parallel=$(nproc) -t$'\t' -k1,1 -k2,2n -k3,3n -k4,4n -k5,5 -k6,6 -k7,7n -k8,8n -k9,9n "$decode_paf" > "$sorted_decode" &
     wait
     rm -f "$tp_paf_full" "$decode_paf"
 
     read num_aln score_identical score_improved score_degraded <<< $(
-        paste "$input_paf" "$sorted_encoded" "$sorted_decode" | \
+        paste "$sorted_input" "$sorted_encoded" "$sorted_decode" | \
         awk -F'\t' -v degraded_file="$degraded_paf" '
         BEGIN { identical=0; improved=0; degraded=0; n=0 }
         {
@@ -1057,29 +1189,26 @@ run_benchmark_real() {
             else if (recon_score > orig_score) improved++  # scores are negative, closer to 0 = better
             else {
                 degraded++
-                # Output: input_paf_line (12 cols + cg:Z:), orig_score, recon_score
-                # Find cg:Z: tag and build output from first file
+                # Output: the 12 mandatory PAF cols (identity + coords) + orig/recon score.
+                # The cg:Z: CIGAR is deliberately NOT written: FL-TP degrades many records, each
+                # carrying a whole-chromosome CIGAR (megabytes), which balloons this file to tens of
+                # GB and dominates benchmark I/O. Identity+scores keep the diagnostic (which
+                # alignments degraded, by how much); the CIGAR is recoverable from the input PAF.
                 out = $1
                 for (i = 2; i <= 12; i++) out = out "\t" $i
-                for (i = 13; i <= NF; i++) {
-                    if ($i ~ /^cg:Z:/) { out = out "\t" $i; break }
-                }
                 print out "\t" orig_score "\t" recon_score >> degraded_file
             }
         }
         END { print n, identical, improved, degraded }'
     )
-    rm -f "$sorted_encoded" "$sorted_decode"
+    rm -f "$sorted_input" "$sorted_encoded" "$sorted_decode"
+    fi
 
     # Write result
-    echo -e "$dataset\t$paf_name\t$cm\t$MC\theuristic\t$size_cigar\t$size_tp\t$num_tps\t$size_tpa\t$encode_runtime\t$encode_memory\t$compress_runtime\t$compress_memory\t$decompress_runtime\t$decompress_memory\t$decode_runtime\t$decode_memory\t$num_aln\t$score_identical\t$score_improved\t$score_degraded" > "$TMP_DIR/$prefix.result.tsv"
+    echo -e "$dataset\t$paf_name\t$cm\t$MC\theuristic\t$size_cigar\t$size_tp\t$num_tps\t$size_tpa\t$encode_runtime\t$encode_memory\t$compress_runtime\t$compress_memory\t$decompress_runtime\t$decompress_memory\t$decode_runtime\t$decode_memory\t$num_aln\t$score_identical\t$score_improved\t$score_degraded\t$num_input_aln\t$DIST" > "$ckpt"
 
-    # Determine output directory and move files immediately
-    if [[ "$dataset" == "hprcv2-25k" ]]; then
-        out_dir="$dir_base/hprcv2-25k"
-    else
-        out_dir="$dir_base/t2t-ape-pangenome"
-    fi
+    # Determine output directory and move files immediately ($dataset is the output dir name)
+    out_dir="$dir_base/$dataset"
 
     # Move encode outputs
     [ -f "$tp_paf" ] && bgzip -l 9 -@ 96 "$tp_paf" && mv "$tp_paf.gz" "$out_dir/encode/"
@@ -1104,99 +1233,156 @@ run_benchmark_real() {
     echo "Completed: $dataset/$paf_name ($cm, mc=$MC)"
 }
 
+trim_terminal_indels(){
+    awk 'BEGIN{FS=OFS="\t"}
+        { ci=0; for(j=13;j<=NF;j++) if($j ~ /^cg:Z:/){ci=j; break}
+          if(ci==0){print; next}
+          # rev: on - strand the query is reverse-complemented, so a query-consuming (I) op at the START
+          # of the CIGAR consumes from the qe end (and at the END consumes from qs). Target (D) is always
+          # forward. Getting this wrong shifts coords and breaks ~half of real alignments (pafcheck fail).
+          rev=($5=="-"); c=substr($ci,6); qs=$3; qe=$4; ts=$8; te=$9; df=0; db=0; L=length(c)
+          while(df<L){ w=substr(c,df+1,20); if(!match(w,/^[0-9]+[ID]/)) break
+            op=substr(w,RLENGTH,1); len=substr(w,1,RLENGTH-1)+0
+            if(op=="I"){ if(rev) qe-=len; else qs+=len } else ts+=len; df+=RLENGTH }
+          while(df+db<L){ last=substr(c,L-db,1); if(last!="I" && last!="D") break
+            s=L-db-19; if(s<df+1) s=df+1; w=substr(c,s,L-db-s+1)
+            match(w,/[0-9]+[ID]$/); m=substr(w,RSTART); len=substr(m,1,length(m)-1)+0
+            if(last=="I"){ if(rev) qs+=len; else qe-=len } else te-=len; db+=length(m) }
+          if(df||db){ c=substr(c,df+1,L-df-db); $3=qs;$4=qe;$8=ts;$9=te; $ci="cg:Z:" c }
+          if(substr($ci,6)==""){ next }                       # drop any alignment that trims to empty
+          print }' "$1"
+}
+
 # Create jobs directory
 mkdir -p $scratch_dir/real_jobs
 
 # =============================================================================
-# HPRCv2 (Human-vs-Human) Benchmark
+# Real-data benchmark (HPRCv2 human, then T2T-ape primates)
 # =============================================================================
+run_real_dataset() {
+    local dataset="$1"
+    local pafs_dir="$dir_base/${dataset}-pafs"
+    local fasta_dir="$scratch_dir/${dataset}-fasta"
+    local gdb_dir="$scratch_dir/${dataset}-gdb"      # GDB: $gdb_dir/<ds>.{1gdb,1ano,contigs.tsv} + hidden .<ds>.bps
+    local seqs="$TMP_DIR/${dataset}.seqlist.txt"
+    mkdir -p "$dir_base/$dataset"/{encode,compress,decompress,decode} "$gdb_dir"
 
-HPRCV2_PAFS="$dir_base/hprcv2-25k-pafs"
-HPRCV2_FASTA_DIR="$scratch_dir/hprcv2-25k-fasta"
-mkdir -p $dir_base/hprcv2-25k/{encode,compress,decompress,decode}
-HPRCV2_SEQS="$TMP_DIR/hprcv2_seqlist.txt"
-ls "$HPRCV2_FASTA_DIR"/*.fa > "$HPRCV2_SEQS"
-REPORT_HPRCV2="$dir_base/hprcv2-25k/benchmark.results.tsv"
-echo -e "$HEADER" > "$REPORT_HPRCV2"
-# Process HPRCv2: copy one PAF.gz at a time to /scratch, decompress, run all cm/mc combos, then clean up
-echo "Running HPRCv2 benchmark..."
-for paf in $HPRCV2_PAFS/*.paf.gz; do
-    [ -f "$paf" ] || continue
-    paf_basename=$(basename "$paf")
-    scratch_paf="$scratch_dir/$paf_basename"
-    input_paf="$scratch_dir/${paf_basename%.paf.gz}.paf"
-    cp "$paf" "$scratch_paf"
-    zcat "$scratch_paf" > "$input_paf"
-    rm -f "$scratch_paf"
-    # EB-TP and DB-TP across the full sweep (mc=16 is the bootstrap warm-up).
-    for cm in edit-distance diagonal-distance; do
-        for mc in $MC_LIST; do
-            # diagonal-distance: skip mc > 96
-            [ "$cm" = "diagonal-distance" ] && [ "$mc" -gt 96 ] && continue
-            run_benchmark_real "hprcv2-25k" "$input_paf" "$HPRCV2_SEQS" "$cm" "$dir_base" "$cigzip" "$TMP_DIR" "$mc"
-        done
+    ls "$fasta_dir"/*.fa > "$seqs" 2>/dev/null || : > "$seqs"
+
+    # To build the GDB on a separate big-scratch node and ship it here, use scripts/build-fastga-gdb.sh.
+    if [ ! -f "$gdb_dir/${dataset}.1gdb" ]; then
+        cat $(cat "$seqs") | bgzip -@ $(nproc) -l 1 -c > "$gdb_dir/${dataset}.combined.fa.gz"
+        $FAtoGDB "$gdb_dir/${dataset}.combined.fa.gz" "$gdb_dir/${dataset}.1gdb" > "$gdb_dir/${dataset}.gdb.log" 2>&1
+        rm -f "$gdb_dir/${dataset}.combined.fa.gz"
+    fi
+    
+    # Contig table for cigzip FL-TP TPA (built from the GDB.
+    if [ ! -f "$gdb_dir/${dataset}.contigs.tsv" ]; then
+        $ONEview "$gdb_dir/${dataset}.1gdb" | awk '$1=="S"{n=$3;p=0;next} $1=="C"{print n"\t"p"\t"p+$2;p+=$2;next} $1=="G"{p+=$2}' > "$gdb_dir/${dataset}.contigs.tsv"
+    fi
+
+    # Output table. Suffix = selection tokens joined by '-' (.ebdb / .fltp1aln / .ebdb-fltptpa-fltp1aln ...)
+    local suffix=$(echo $BENCH_METHODS | tr -s ' ' '-')${RUN_TAG:+-$RUN_TAG}
+    local report="$dir_base/${dataset}.benchmark.results.${suffix}.tsv"
+    # Report is rebuilt atomically from the persisted checkpoints AFTER the loop (resume-safe: an
+    # interrupted run leaves the previous report intact). Do not truncate it here.
+    echo "Running $dataset benchmark..."
+    # Process one PAF.gz at a time: copy to /scratch, decompress, run the methods, clean up.
+    for paf in "$pafs_dir"/*.paf.gz; do
+        [ -f "$paf" ] || continue
+        local paf_basename=$(basename "$paf")
+        local scratch_paf="$scratch_dir/$paf_basename"
+        local input_paf="$scratch_dir/${paf_basename%.paf.gz}.paf"
+        cp "$paf" "$scratch_paf"; zcat "$scratch_paf" > "$input_paf"; rm -f "$scratch_paf"
+        # --- Input prep shared across methods (no genome excluded; just preprocessing) ---
+        # (1) Drop degenerate (zero query/target span = pure-indel) alignments for the FL-TP input only:
+        #     FL-TP cannot represent them.
+        local nodegen_paf="${input_paf%.paf}.nodegen.paf"
+        awk -F'\t' '{ for(i=13;i<=NF;i++) if($i ~ /^cg:Z:/){ if($3==$4 || $8==$9) next; break } print }' \
+            "$input_paf" > "$nodegen_paf"
+        # (2) FL-TP input: terminal-indel trim so every alignment ends in =/X (ALNtoPAF -x requires it).
+        local fltp_paf="${input_paf%.paf}.fltp.paf"
+        trim_terminal_indels "$nodegen_paf" > "$fltp_paf"
+
+        # --- Bootstrap warm-up: EB-TP mc=16. Runs FIRST to warm the FS cache / stabilize timings; excluded
+        #     from reporting. Needs FASTAs, so only when a FASTA-using method is selected; fltp1aln-only
+        #     (GDB-only node) has no warm-up. mc=16 is NOT in MC_LIST, so this is the sole mc=16 row. ---
+        if want_method ebdb || want_method fltptpa || want_method fltptpa_diff || want_method fltptpa_nodiff; then
+            run_benchmark_real "$dataset" "$input_paf" "$seqs" "edit-distance" "$dir_base" "$cigzip" "$TMP_DIR" 16 "gap-affine2p"
+        fi
+
+        # ================= EB-TP / DB-TP (cigzip) -- needs FASTAs, not GDB ================================
+        # Reconstruct under gap-affine2p (matching the real WFMASH scoring).
+        if want_method ebdb; then
+            for cm in edit-distance diagonal-distance; do
+                for mc in $MC_LIST; do
+                    run_benchmark_real "$dataset" "$input_paf" "$seqs" "$cm" "$dir_base" "$cigzip" "$TMP_DIR" "$mc" "gap-affine2p"
+                done
+            done
+        fi
+        # ================= end EB-TP / DB-TP =============================================================
+
+        # ================= FL-TP TPA (cigzip fastga / fastga-no-diff) -- needs FASTAs, not GDB ===========
+        # gap-affine2p at every spacing (matches WFMASH scoring, like EB/DB). edit reconstruction ONLY
+        # at spacing 100, where it is compared against FL-TP 1aln (ALNtoPAF -x, edit / l=100 only).
+        local fl_diff=false fl_nodiff=false
+        if want_method fltptpa || want_method fltptpa_diff;   then fl_diff=true;   fi
+        if want_method fltptpa || want_method fltptpa_nodiff; then fl_nodiff=true; fi
+        if $fl_diff || $fl_nodiff; then
+            for fl_mc in $FASTGA_MC_LIST; do
+                if $fl_diff;   then run_benchmark_real "$dataset" "$fltp_paf" "$seqs" "fastga"         "$dir_base" "$cigzip" "$TMP_DIR" "$fl_mc" "gap-affine2p"; fi
+                if $fl_nodiff; then run_benchmark_real "$dataset" "$fltp_paf" "$seqs" "fastga-no-diff" "$dir_base" "$cigzip" "$TMP_DIR" "$fl_mc" "gap-affine2p"; fi
+            done
+            if $fl_diff;   then run_benchmark_real "$dataset" "$fltp_paf" "$seqs" "fastga"         "$dir_base" "$cigzip" "$TMP_DIR" 100 "edit"; fi
+            if $fl_nodiff; then run_benchmark_real "$dataset" "$fltp_paf" "$seqs" "fastga-no-diff" "$dir_base" "$cigzip" "$TMP_DIR" 100 "edit"; fi
+        fi
+        # ================= end FL-TP TPA =================================================================
+
+        # ================= FL-TP 1aln (FASTGA PAFtoALN/ALNtoPAF reference) -- needs GDB, not FASTAs =======
+        # l=100; ALNtoPAF -x reconstructs under edit distance.
+        if want_method fltp1aln || want_method fltp1aln_diff;   then run_benchmark_real "$dataset" "$fltp_paf" "$seqs" "fastga-native"         "$dir_base" "$cigzip" "$TMP_DIR" 100 "edit"; fi
+        if want_method fltp1aln || want_method fltp1aln_nodiff; then run_benchmark_real "$dataset" "$fltp_paf" "$seqs" "fastga-native-nodiff" "$dir_base" "$cigzip" "$TMP_DIR" 100 "edit"; fi
+        # ================= end FL-TP 1aln ================================================================
+
+        rm -f "$input_paf" "$nodegen_paf" "$fltp_paf"
     done
-    # FL-TP (fastga): trace spacings $FASTGA_MC_LIST (fastga scaling, like EB/DB-TP). Reconstructs under the same
-    # dual gap-affine model as EB/DB-TP (see run_benchmark_real), so it is a full Table 2 entry.
-    #for fl_mc in $FASTGA_MC_LIST; do
-    #    run_benchmark_real "hprcv2-25k" "$input_paf" "$HPRCV2_SEQS" "fastga" "$dir_base" "$cigzip" "$TMP_DIR" "$fl_mc"
-    #done
-    rm -f "$input_paf"
-done
-# Merge HPRCv2 results
-cat "$TMP_DIR"/*.result.tsv 2>/dev/null | grep "^hprcv2-25k" | sort >> "$REPORT_HPRCV2"
-rm -f "$TMP_DIR"/*.result.tsv
+    # Rebuild the report atomically from the persisted per-iteration checkpoints (this run's new rows
+    # plus any carried over from prior/interrupted runs). Checkpoints are KEPT so a re-run resumes.
+    { echo -e "$HEADER"; cat "$TMP_DIR/$suffix"/*.result.tsv 2>/dev/null | grep "^$dataset" | sort; } > "$report.tmp" && mv "$report.tmp" "$report"
+}
+
+# Select methods via BENCH_METHODS
+run_real_dataset "hprcv2-25k"
+run_real_dataset "t2t-ape-pangenome"
 # =============================================================================
 
-# =============================================================================
-# Primates Benchmark
-# =============================================================================
-
-PRIMATES_PAFS="$dir_base/t2t-ape-pangenome-pafs"
-PRIMATES_FASTA_DIR="$scratch_dir/t2t-ape-pangenome-fasta"
-mkdir -p $dir_base/t2t-ape-pangenome/{encode,compress,decompress,decode}
-PRIMATES_SEQS="$TMP_DIR/primates_seqlist.txt"
-ls "$PRIMATES_FASTA_DIR"/*.fa > "$PRIMATES_SEQS"
-REPORT_PRIMATES="$dir_base/t2t-ape-pangenome/benchmark.results.tsv"
-echo -e "$HEADER" > "$REPORT_PRIMATES"
-# Process Primates: copy one PAF.gz at a time to /scratch, decompress, run all cm/mc combos, then clean up
-echo "Running Primates benchmark..."
-for paf in $PRIMATES_PAFS/*.paf.gz; do
-    [ -f "$paf" ] || continue
-    paf_basename=$(basename "$paf")
-    scratch_paf="$scratch_dir/$paf_basename"
-    input_paf="$scratch_dir/${paf_basename%.paf.gz}.paf"
-    cp "$paf" "$scratch_paf"
-    zcat "$scratch_paf" > "$input_paf"
-    rm -f "$scratch_paf"
-    # EB-TP and DB-TP across the full sweep (mc=16 is the bootstrap warm-up).
-    for cm in edit-distance diagonal-distance; do
-        for mc in $MC_LIST; do
-            # diagonal-distance: skip mc > 96
-            [ "$cm" = "diagonal-distance" ] && [ "$mc" -gt 96 ] && continue
-            run_benchmark_real "primates" "$input_paf" "$PRIMATES_SEQS" "$cm" "$dir_base" "$cigzip" "$TMP_DIR" "$mc"
-        done
-    done
-    # FL-TP (fastga): trace spacings $FASTGA_MC_LIST (fastga scaling, like EB/DB-TP). Reconstructs under the same
-    # dual gap-affine model as EB/DB-TP (see run_benchmark_real), so it is a full Table 2 entry.
-    #for fl_mc in $FASTGA_MC_LIST; do
-    #    run_benchmark_real "primates" "$input_paf" "$PRIMATES_SEQS" "fastga" "$dir_base" "$cigzip" "$TMP_DIR" "$fl_mc"
-    #done
-    rm -f "$input_paf"
-done
-# Merge Primates results
-cat "$TMP_DIR"/*.result.tsv 2>/dev/null | grep "^primates" | sort >> "$REPORT_PRIMATES"
-rm -f "$TMP_DIR"/*.result.tsv
-# =============================================================================
-
-# Cleanup
-rm -rf "$TMP_DIR"
+# Cleanup. NOTE: $TMP_DIR holds the resume checkpoints (per-iteration result rows). Keep it if you
+# might re-run to fill in failed/interrupted iterations. Delete it ONLY to force a full recompute:
+#   rm -rf "$TMP_DIR"
 rm -rf $scratch_dir/real_jobs
 
-echo "Real data benchmark complete."
-echo "HPRCv2 results: $REPORT_HPRCV2"
-echo "Primates results: $REPORT_PRIMATES"
+suffix=$(echo $BENCH_METHODS | tr -s ' ' '-')${RUN_TAG:+-$RUN_TAG}
+echo "Real data benchmark complete (BENCH_METHODS='$BENCH_METHODS'${RUN_TAG:+, RUN_TAG='$RUN_TAG'})."
+echo "  hprcv2-25k:        $dir_base/hprcv2-25k.benchmark.results.${suffix}.tsv"
+echo "  t2t-ape-pangenome: $dir_base/t2t-ape-pangenome.benchmark.results.${suffix}.tsv"
 ```
+
+Assemble the final table from whatever suffixed partials exist into `<ds>.benchmark.results.tsv`.
+
+```bash
+dir_base=/moosefs/guarracino/tracepoints
+for ds in hprcv2-25k t2t-ape-pangenome; do
+    out="$dir_base/$ds.benchmark.results.tsv"
+    partials=$(ls "$dir_base/$ds".benchmark.results.*.tsv 2>/dev/null)   # excludes canonical (no middle token)
+    [ -n "$partials" ] || { echo "skip $ds: no partials found" >&2; continue; }
+    head -1 $(echo "$partials" | head -1) > "$out"                       # header
+    tail -q -n +2 $partials | sort >> "$out"                            # bodies from all selections, sorted
+    echo "merged -> $out ($(( $(wc -l < "$out") - 1 )) rows) from: $(basename -a $partials | tr '\n' ' ')"
+done
+```
+
+Table 2 (`tab:comprehensive`) rows come from this merged `<ds>.benchmark.results.tsv`:
+`scripts/gen_table2_rows.sh <ds>.benchmark.results.tsv <uncompressed_PAF_GiB>`.
 
 Bgzip decompression benchmark:
 

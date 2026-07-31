@@ -16,7 +16,7 @@ data <- read_tsv(file.path(sim_data_dir, "benchmark.results.tsv"), show_col_type
 # Filter for b=32 / delta=32 (mc=32) and high memory mode
 df <- data %>%
   filter(memory_mode == "high") %>%
-  filter((tp_type == "fastga" & mc == 100) | (tp_type == "standard" & mc == 32))
+  filter((tp_type == "fastga" & mc == 100) | (tp_type == "fastga-no-diff" & mc == 100) | (tp_type == "standard" & mc == 32))
 
 # Calculate compression ratios (smaller = better compression)
 df <- df %>%
@@ -25,6 +25,7 @@ df <- df %>%
     ratio_tpa = size_tpa_bytes / size_cigar_bytes,
     method = case_when(
       tp_type == "fastga" ~ "FL-TP",
+      tp_type == "fastga-no-diff" ~ "FL-TP nd",
       cm == "edit-distance" ~ "EB-TP",
       cm == "diagonal-distance" ~ "DB-TP"
     )
@@ -137,6 +138,41 @@ cat(sprintf("\nEB-TP vs FL-TP at 100 Kb: %.1f -- %.1f× improvement\n",
 cat("\n")
 
 # =============================================================================
+# Claim 2b/3b: DB-TP / EB-TP vs the no-diff FL-TP (compression-appropriate
+# baseline; the per-segment edit count is optional for compression) at 100 Kb.
+# These are the numbers reported in the Abstract, Results, and Discussion.
+# =============================================================================
+
+cat("CLAIM 2b/3b: DB-TP and EB-TP vs FL-TP no-diff at 100 Kb\n")
+cat("-" %>% rep(70) %>% paste0(collapse = ""), "\n")
+
+fltpnd_100kb <- data_100kb %>%
+  filter(method == "FL-TP nd") %>%
+  select(e, fltpnd_ratio = ratio_tpa)
+
+comparison_nd_100kb <- dbtp_100kb %>%
+  left_join(ebtp_100kb, by = "e") %>%
+  left_join(fltpnd_100kb, by = "e") %>%
+  mutate(
+    dbtp_vs_fltpnd = fltpnd_ratio / dbtp_ratio,
+    ebtp_vs_fltpnd = fltpnd_ratio / ebtp_ratio
+  )
+
+print(comparison_nd_100kb)
+
+cat(sprintf("\nDB-TP vs FL-TP nd at 100 Kb (Results, Discussion): %.1f -- %.1f×\n",
+            min(comparison_nd_100kb$dbtp_vs_fltpnd),
+            max(comparison_nd_100kb$dbtp_vs_fltpnd)))
+cat(sprintf("DB-TP vs FL-TP nd at 100 Kb, 1--5%% divergence (Abstract): %.1f -- %.1f×\n",
+            min(comparison_nd_100kb$dbtp_vs_fltpnd[comparison_nd_100kb$e %in% c(0.01, 0.05)]),
+            max(comparison_nd_100kb$dbtp_vs_fltpnd[comparison_nd_100kb$e %in% c(0.01, 0.05)])))
+cat(sprintf("EB-TP vs FL-TP nd at 100 Kb (Results): %.1f -- %.1f×  (<1 means FL-TP nd is smaller)\n",
+            min(comparison_nd_100kb$ebtp_vs_fltpnd),
+            max(comparison_nd_100kb$ebtp_vs_fltpnd)))
+
+cat("\n")
+
+# =============================================================================
 # Additional: Full table of compression ratios for reference
 # =============================================================================
 
@@ -156,6 +192,43 @@ full_table <- df %>%
   select(l, e, BGZIP, `FL-TP`, `EB-TP`, `DB-TP`)
 
 print(full_table, n = Inf)
+
+cat("\n")
+
+# =============================================================================
+# FL-TP no-diff vs FL-TP (simulated, trace spacing 100)
+# no-diff drops the per-segment diff count, so the TPA stores one stream instead
+# of two; decode always realigns exactly (no '=' shortcut, no banding).
+# =============================================================================
+
+cat("FL-TP no-diff vs FL-TP (simulated, trace spacing 100)\n")
+cat("-" %>% rep(70) %>% paste0(collapse = ""), "\n")
+
+nd <- data %>%
+  filter(memory_mode == "high", mc == 100,
+         tp_type %in% c("fastga", "fastga-no-diff")) %>%
+  mutate(method = if_else(tp_type == "fastga", "FL-TP", "FL-TP no-diff"),
+         recon_runtime = decompress_runtime_sec + decode_runtime_sec) %>%
+  select(l, e, method, size_tpa_bytes, recon_runtime)
+
+if (n_distinct(nd$method) == 2) {
+  nd_wide <- nd %>%
+    pivot_wider(names_from = method, values_from = c(size_tpa_bytes, recon_runtime)) %>%
+    mutate(
+      tpa_reduction_pct = (1 - `size_tpa_bytes_FL-TP no-diff` / `size_tpa_bytes_FL-TP`) * 100,
+      recon_ratio = `recon_runtime_FL-TP no-diff` / `recon_runtime_FL-TP`
+    ) %>%
+    arrange(l, e)
+  print(nd_wide %>% select(l, e, tpa_reduction_pct, recon_ratio), n = Inf)
+  cat(sprintf("\nTPA size reduction (no-diff vs FL-TP): %.1f%% -- %.1f%%\n",
+              min(nd_wide$tpa_reduction_pct, na.rm = TRUE),
+              max(nd_wide$tpa_reduction_pct, na.rm = TRUE)))
+  cat(sprintf("Reconstruction time ratio (no-diff / FL-TP): %.2f -- %.2f×\n",
+              min(nd_wide$recon_ratio, na.rm = TRUE),
+              max(nd_wide$recon_ratio, na.rm = TRUE)))
+} else {
+  cat("  fastga-no-diff rows not present in benchmark.results.tsv yet (rerun code.md).\n")
+}
 
 cat("\n")
 
@@ -199,16 +272,10 @@ cat("=" %>% rep(70) %>% paste0(collapse = ""), "\n\n")
 # Compute TPA -> PAF time = decompress + decode
 df_decode <- df %>%
   mutate(
-    # TPA -> PAF runtime
-    tpa_to_paf_runtime = case_when(
-      method == "FL-TP" ~ decompress_runtime_sec + decode_runtime_sec,
-      TRUE ~ decompress_runtime_sec + decode_heuristic_runtime_sec
-    ),
+    # TPA -> PAF runtime (single banded decode for all methods)
+    tpa_to_paf_runtime = decompress_runtime_sec + decode_runtime_sec,
     # TPA -> PAF peak memory (max of decompress and decode)
-    tpa_to_paf_memory_kb = case_when(
-      method == "FL-TP" ~ pmax(decompress_memory_kb, decode_memory_kb),
-      TRUE ~ pmax(decompress_memory_kb, decode_heuristic_memory_kb)
-    ),
+    tpa_to_paf_memory_kb = pmax(decompress_memory_kb, decode_memory_kb),
     tpa_to_paf_memory_mb = tpa_to_paf_memory_kb / 1024
   )
 
@@ -282,10 +349,7 @@ df_decomp_frac <- data %>%
       cm == "edit-distance" ~ "EB-TP",
       cm == "diagonal-distance" ~ "DB-TP"
     ),
-    total_runtime = case_when(
-      method == "FL-TP" ~ decompress_runtime_sec + decode_runtime_sec,
-      TRUE ~ decompress_runtime_sec + decode_heuristic_runtime_sec
-    ),
+    total_runtime = decompress_runtime_sec + decode_runtime_sec,
     decomp_pct = ifelse(total_runtime > 0,
                         decompress_runtime_sec / total_runtime * 100, 0),
     length_label = factor(
@@ -357,6 +421,7 @@ compute_method_stats <- function(data) {
       total_identical = sum(score_identical),
       total_improved = sum(score_improved),
       total_degraded = sum(score_degraded),
+      # score_* count STORED records (segments for FL-TP TPA), so the denominator is num_alignments
       pct_identical = sum(score_identical) / sum(num_alignments) * 100,
       pct_improved = sum(score_improved) / sum(num_alignments) * 100,
       pct_degraded = sum(score_degraded) / sum(num_alignments) * 100,
@@ -374,7 +439,11 @@ cat("HUMAN-HUMAN (HPRCv2) DATASET\n")
 cat("-" %>% rep(70) %>% paste0(collapse = ""), "\n\n")
 
 human_data <- read_tsv(file.path(real_data_dir, "hprcv2-25k.benchmark.results.tsv"), show_col_types = FALSE)
-human_data <- human_data %>% filter(mc != 16)
+# New 23-col format: num_output_alignments (was num_alignments); cm also carries fastga* methods
+# (score_* = "NA"); distance column added. Real-data stats use EB/DB only.
+human_data <- human_data %>%
+  rename(num_alignments = num_output_alignments) %>%
+  filter(cm %in% c("edit-distance", "diagonal-distance"), mc != 16)
 human_stats <- compute_method_stats(human_data)
 
 cat("Human summary by method (all thresholds):\n")
@@ -414,6 +483,12 @@ cat("PRIMATE-PRIMATE (T2T APES) DATASET\n")
 cat("-" %>% rep(70) %>% paste0(collapse = ""), "\n\n")
 
 primate_data <- read_tsv(file.path(real_data_dir, "t2t-ape-pangenome.benchmark.results.tsv"), show_col_types = FALSE)
+# New 23-col format: num_output_alignments (was num_alignments); cm also carries fastga* methods
+# (score_* = "NA"); distance column added (EB/DB are gap-affine2p only). Real-data stats use EB/DB
+# only, so drop fastga + the mc=16 warmup and restore the expected column name.
+primate_data <- primate_data %>%
+  rename(num_alignments = num_output_alignments) %>%
+  filter(cm %in% c("edit-distance", "diagonal-distance"), mc != 16)
 primate_stats <- compute_method_stats(primate_data)
 
 cat("Primate summary by method (all thresholds):\n")
@@ -597,47 +672,6 @@ cat("\n")
 cat("=" %>% rep(70) %>% paste0(collapse = ""), "\n")
 cat("ADDITIONAL MANUSCRIPT NUMBER VERIFICATIONS\n")
 cat("=" %>% rep(70) %>% paste0(collapse = ""), "\n\n")
-
-# -----------------------------------------------------------------------------
-# SIMULATED DATA: Heuristic vs Standard WFA (Supp S2/S3)
-# Line 34: "runtime by up to 3.7×" and "memory by up to 5.4×"
-# -----------------------------------------------------------------------------
-
-cat("SIMULATED: Heuristic vs Standard WFA speedup (Supp S2/S3)\n")
-cat("-" %>% rep(70) %>% paste0(collapse = ""), "\n\n")
-
-# Filter for DB-TP at 100 Kb with mc=32 and high memory mode (where heuristic matters)
-heuristic_comparison <- data %>%
-  filter(memory_mode == "high") %>%
-  filter(tp_type == "standard" & cm == "diagonal-distance" & mc == 32) %>%
-  filter(l == 100000) %>%
-  mutate(
-    runtime_speedup = decode_runtime_sec / decode_heuristic_runtime_sec,
-    memory_reduction = decode_memory_kb / decode_heuristic_memory_kb
-  ) %>%
-  select(l, e, decode_runtime_sec, decode_heuristic_runtime_sec, runtime_speedup,
-         decode_memory_kb, decode_heuristic_memory_kb, memory_reduction)
-
-cat("DB-TP at 100 Kb, standard WFA vs heuristic WFA (high memory mode):\n")
-print(heuristic_comparison)
-
-cat(sprintf("\nMax runtime speedup (standard / heuristic): %.1f×\n", max(heuristic_comparison$runtime_speedup)))
-cat(sprintf("Max memory reduction (standard / heuristic): %.1f×\n", max(heuristic_comparison$memory_reduction)))
-
-# Also check across all lengths and error rates
-heuristic_all <- data %>%
-  filter(memory_mode == "high") %>%
-  filter(tp_type == "standard" & cm == "diagonal-distance" & mc == 32) %>%
-  mutate(
-    runtime_speedup = decode_runtime_sec / decode_heuristic_runtime_sec,
-    memory_reduction = decode_memory_kb / decode_heuristic_memory_kb
-  )
-
-cat(sprintf("\nAcross all lengths (high memory mode):\n"))
-cat(sprintf("  Max runtime speedup: %.1f×\n", max(heuristic_all$runtime_speedup)))
-cat(sprintf("  Max memory reduction: %.1f×\n", max(heuristic_all$memory_reduction)))
-
-cat("\n")
 
 # -----------------------------------------------------------------------------
 # SIMULATED DATA: Tracepoint counts at 100 Kb (Supp S4)
@@ -1184,11 +1218,6 @@ cat(sprintf("\nVerify: BGZIP decompression at 100 Kb (manuscript: under 2 sec):\
 cat(sprintf("  Range: %.2f--%.2f sec\n",
             min(bgzip_100kb$bgzip_decompress_runtime_sec),
             max(bgzip_100kb$bgzip_decompress_runtime_sec)))
-
-# Claim: "memory by up to 5.4×" (heuristic WFA)
-cat(sprintf("\nVerify: DB-TP memory reduction via heuristic WFA (manuscript: 5.4×):\n"))
-cat(sprintf("  At 100 Kb: max %.1f×\n", max(heuristic_comparison$memory_reduction)))
-cat(sprintf("  All lengths: max %.1f×\n", max(heuristic_all$memory_reduction)))
 
 cat("\n")
 

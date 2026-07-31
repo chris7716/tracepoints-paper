@@ -13,6 +13,11 @@ fig_dir <- Sys.getenv("TRACEPOINTS_FIG_DIR", unset = "paper/figures")
 # Read data
 data <- read_tsv(file.path(data_dir, "simulated-data", "benchmark.results.tsv"), show_col_types = FALSE)
 
+# Byte-size axis labels: adaptive SI unit with one decimal, but drop a trailing ".0"
+# (e.g. "1.0 MB" -> "1 MB", "500.0 kB" -> "500 kB"). This avoids ggplot's default
+# whole-unit rounding, which repeated labels like "1 MB"/"2 MB" on narrow ranges.
+bytes_lab <- function(x) sub("\\.0 ", " ", label_bytes(units = "auto_si", accuracy = 0.1)(x))
+
 # Common theme (matching compression_ratios figure)
 common_theme <- theme_bw(base_size = 15) +
   theme(
@@ -49,17 +54,19 @@ length_cols    <- setNames(c("#fdd0a2", "#fdae6b", "#fd8d3c",
 df_delta <- data %>%
   filter(memory_mode == "high") %>%
   filter((tp_type == "standard" & mc %in% delta_levels) |
-         (tp_type == "fastga"   & mc %in% fastga_levels)) %>%
+         (tp_type == "fastga"   & mc %in% fastga_levels) |
+         (tp_type == "fastga-no-diff" & mc %in% fastga_levels)) %>%
   filter(e %in% c(0.001, 0.01, 0.05, 0.10, 0.20)) %>%
   mutate(
     ratio_tpa = size_tpa_bytes / size_cigar_bytes,
     method = factor(
       case_when(
-        tp_type == "fastga" ~ "FL-TP TPA",
-        cm == "edit-distance" ~ "EB-TP TPA",
-        cm == "diagonal-distance" ~ "DB-TP TPA"
+        tp_type == "fastga" ~ "FL-TP",
+        tp_type == "fastga-no-diff" ~ "FL-TP nd",
+        cm == "edit-distance" ~ "EB-TP",
+        cm == "diagonal-distance" ~ "DB-TP"
       ),
-      levels = c("FL-TP TPA", "EB-TP TPA", "DB-TP TPA")
+      levels = c("FL-TP", "FL-TP nd", "EB-TP", "DB-TP")
     ),
     length_label = factor(
       case_when(
@@ -75,8 +82,8 @@ df_delta <- data %>%
     spacing_label   = factor(as.character(mc), levels = as.character(fastga_levels))
   )
 
-df_fltp <- df_delta %>% filter(method == "FL-TP TPA")
-df_ebdb <- df_delta %>% filter(method != "FL-TP TPA")
+df_fltp <- df_delta %>% filter(method %in% c("FL-TP", "FL-TP nd"))
+df_ebdb <- df_delta %>% filter(!method %in% c("FL-TP", "FL-TP nd"))
 
 p_delta <- ggplot() +
   # FL-TP: trace spacing l -> "Length" legend (orange palette)
@@ -103,8 +110,8 @@ p_delta <- ggplot() +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
         legend.box = "vertical", legend.spacing.y = unit(12, "pt"))
 
-ggsave(file.path(fig_dir, "figS1_delta_effect.png"), p_delta, width = 10, height = 7.5, dpi = 300, bg = "white")
-ggsave(file.path(fig_dir, "figS1_delta_effect.pdf"), p_delta, width = 10, height = 7.5, bg = "white")
+ggsave(file.path(fig_dir, "figS1_delta_effect.png"), p_delta, width = 10, height = 8.3, dpi = 300, bg = "white")
+ggsave(file.path(fig_dir, "figS1_delta_effect.pdf"), p_delta, width = 10, height = 8.3, bg = "white")
 
 message("Figure S1 saved: figS1_delta_effect.png")
 
@@ -117,13 +124,16 @@ df_tp_counts <- data %>%
   filter((tp_type == "fastga" & mc == 100) | (tp_type == "standard" & mc == 32)) %>%
   filter(e %in% c(0.001, 0.01, 0.05, 0.10, 0.20)) %>%
   mutate(
+    # FL-TP TPA and its no-diff variant share the SAME segmentation, hence the same
+    # tracepoint count; they differ only in bytes per tracepoint. A single FL-TP bar
+    # stands for both (the caption states the equality) rather than a duplicate bar.
     method = factor(
       case_when(
-        tp_type == "fastga" ~ "FL-TP TPA",
-        cm == "edit-distance" ~ "EB-TP TPA",
-        cm == "diagonal-distance" ~ "DB-TP TPA"
+        tp_type == "fastga" ~ "FL-TP",
+        cm == "edit-distance" ~ "EB-TP",
+        cm == "diagonal-distance" ~ "DB-TP"
       ),
-      levels = c("FL-TP TPA", "EB-TP TPA", "DB-TP TPA")
+      levels = c("FL-TP", "EB-TP", "DB-TP")
     ),
     length_label = factor(
       case_when(
@@ -141,7 +151,7 @@ p_tp_counts <- ggplot(df_tp_counts, aes(x = error_label, y = num_tracepoints, fi
   geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
   facet_wrap(~ length_label, nrow = 2, scales = "free_y") +
   scale_y_log10(labels = scales::comma) +
-  scale_fill_manual(values = c("FL-TP TPA" = "#7570b3", "EB-TP TPA" = "#d95f02", "DB-TP TPA" = "#377eb8"), name = "Method") +
+  scale_fill_manual(values = c("FL-TP" = "#7570b3", "EB-TP" = "#d95f02", "DB-TP" = "#377eb8"), name = "Method") +
   labs(
     x = "Error rate",
     y = "Number of tracepoints"
@@ -237,14 +247,14 @@ library(scales)
 df_sizes <- data %>%
   filter(memory_mode == "high") %>%
   filter((tp_type == "fastga" & mc == 100) |
-         (tp_type == "fastga-native" & mc == 100) |
+         (tp_type == "fastga-no-diff" & mc == 100) |
          (tp_type == "standard" & mc == 32)) %>%
   filter(e %in% c(0.001, 0.01, 0.05, 0.10, 0.20)) %>%
   mutate(
     bgzip_bytes = size_cigar_bgzip_bytes,
     tpa_bytes   = size_tpa_bytes,
     method = case_when(tp_type == "fastga" ~ "FL-TP",
-                       tp_type == "fastga-native" ~ "FL-TP FASTGA",
+                       tp_type == "fastga-no-diff" ~ "FL-TP nd",
                        cm == "edit-distance" ~ "EB-TP",
                        cm == "diagonal-distance" ~ "DB-TP"),
     length_label = factor(
@@ -256,32 +266,32 @@ df_sizes <- data %>%
 
 fltp_s <- df_sizes %>% filter(method == "FL-TP") %>%
   select(l, e, length_label, error_label, bgzip_bytes, fltp_cigzip_tpa = tpa_bytes)
-fltp_native_s <- df_sizes %>% filter(method == "FL-TP FASTGA") %>%
-  select(l, e, length_label, error_label, fltp_fastga_tpa = tpa_bytes)
+fltp_nodiff_s <- df_sizes %>% filter(method == "FL-TP nd") %>%
+  select(l, e, length_label, error_label, fltp_nodiff_tpa = tpa_bytes)
 ebtp_s <- df_sizes %>% filter(method == "EB-TP") %>%
   select(l, e, length_label, error_label, ebtp_tpa = tpa_bytes)
 dbtp_s <- df_sizes %>% filter(method == "DB-TP") %>%
   select(l, e, length_label, error_label, dbtp_tpa = tpa_bytes)
 
 sizes_wide <- fltp_s %>%
-  left_join(fltp_native_s, by = c("l", "e", "length_label", "error_label")) %>%
+  left_join(fltp_nodiff_s, by = c("l", "e", "length_label", "error_label")) %>%
   left_join(ebtp_s, by = c("l", "e", "length_label", "error_label")) %>%
   left_join(dbtp_s, by = c("l", "e", "length_label", "error_label"))
 
 sizes_long <- sizes_wide %>%
-  pivot_longer(cols = c(bgzip_bytes, fltp_cigzip_tpa, fltp_fastga_tpa, ebtp_tpa, dbtp_tpa),
+  pivot_longer(cols = c(bgzip_bytes, fltp_cigzip_tpa, fltp_nodiff_tpa, ebtp_tpa, dbtp_tpa),
                names_to = "format", values_to = "bytes") %>%
   mutate(format_label = factor(
     case_when(format == "bgzip_bytes" ~ "CG BGZIP",
-              format == "fltp_cigzip_tpa" ~ "FL-TP TPA",
-              format == "fltp_fastga_tpa" ~ "FL-TP 1aln",
-              format == "ebtp_tpa" ~ "EB-TP TPA",
-              format == "dbtp_tpa" ~ "DB-TP TPA"),
-    levels = c("CG BGZIP", "FL-TP TPA", "FL-TP 1aln", "EB-TP TPA", "DB-TP TPA")))
+              format == "fltp_cigzip_tpa" ~ "FL-TP",
+              format == "fltp_nodiff_tpa" ~ "FL-TP nd",
+              format == "ebtp_tpa" ~ "EB-TP",
+              format == "dbtp_tpa" ~ "DB-TP"),
+    levels = c("CG BGZIP", "FL-TP", "FL-TP nd", "EB-TP", "DB-TP")))
 
 size_colors <- scale_fill_manual(
-  values = c("CG BGZIP" = "#1b9e77", "FL-TP TPA" = "#7570b3",
-             "FL-TP 1aln" = "#9e9ac8", "EB-TP TPA" = "#d95f02", "DB-TP TPA" = "#377eb8"),
+  values = c("CG BGZIP" = "#1b9e77", "FL-TP" = "#7570b3", "FL-TP nd" = "#54278f",
+             "EB-TP" = "#d95f02", "DB-TP" = "#377eb8"),
   name = "Method"
 )
 
@@ -292,7 +302,7 @@ p_sizes_row1 <- ggplot(
   geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
   facet_wrap(~ length_label, nrow = 1, scales = "free_y") +
   size_colors +
-  scale_y_continuous(labels = label_bytes(units = "auto_si"), n.breaks = 8,
+  scale_y_continuous(labels = bytes_lab, n.breaks = 6,
                      expand = expansion(mult = c(0, 0.1)), minor_breaks = NULL) +
   labs(x = NULL, y = "File size") +
   common_theme +
@@ -314,7 +324,7 @@ make_broken_size_panel <- function(df_panel, low_max, high_max,
   low_ticks  <- pretty(c(0, low_max), n = 4); low_ticks <- low_ticks[low_ticks <= low_max]
   high_ticks <- pretty(c(low_max, high_max), n = 3); high_ticks <- high_ticks[high_ticks > low_max & high_ticks <= high_max]
   brks   <- c(tf(low_ticks), tf(high_ticks))
-  labs_y <- label_bytes(units = "auto_si")(c(low_ticks, high_ticks))
+  labs_y <- bytes_lab(c(low_ticks, high_ticks))
 
   ggplot(df_plot, aes(x = error_label, y = bytes_plot, fill = format_label)) +
     geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
@@ -346,13 +356,90 @@ p_sizes_row2 <- p_sizes_row2 & labs(x = "Error rate")
 
 p_sizes <- p_sizes_row1 / p_sizes_row2 +
   plot_layout(heights = c(0.45, 0.55), guides = "collect") &
-  theme(legend.position = "bottom")
+  theme(legend.position = "bottom") &
+  guides(fill = guide_legend(nrow = 2))
 
 ggsave(file.path(fig_dir, "figS7_absolute_sizes.png"), p_sizes, width = 10, height = 6, dpi = 300, bg = "white")
 ggsave(file.path(fig_dir, "figS7_absolute_sizes.pdf"), p_sizes, width = 10, height = 6, bg = "white")
 message("Figure S7 saved: figS7_absolute_sizes.pdf")
 
-# (The former Figure S8, FL-TP compression ratio across trace spacings, was
-# dropped: figS1 now shows the same FL-TP spacing sweep as its top method row.)
+# =============================================================================
+# Figure S10: FL-TP implementation/format comparison (cigzip TPA vs FASTGA .1aln)
+# Both share the SAME FL-TP segmentation (trace spacing 100); they differ only in
+# the storage format and the reconstruction tool (cigzip, Rust, TPA vs FASTGA, C,
+# .1aln), with and without per-segment diffs. This isolates the implementation
+# cost (apples-to-apples on segmentation), kept out of the main method comparison.
+# =============================================================================
+# Order pairs each cigzip TPA bar next to its FASTGA .1aln counterpart for the same
+# setting (diff pair, then no-diff pair). Colour by implementation: purple = TPA
+# (cigzip), orange = 1aln (FASTGA); darker = with diffs, lighter = no-diff.
+impl_levels <- c("FL-TP TPA", "FL-TP 1aln", "FL-TP TPA nd", "FL-TP 1aln nd")
+impl_colors <- c("FL-TP TPA"    = "#762a83", "FL-TP 1aln"    = "#d95f02",
+                 "FL-TP TPA nd" = "#c2a5cf", "FL-TP 1aln nd" = "#fdae6b")
+# Log-scale tick helpers (more ticks on the time/memory panels)
+impl_log_major <- as.vector(outer(c(1, 2, 5), 10^(0:5)))
+impl_log_minor <- as.vector(outer(1:9, 10^(0:5)))
 
-message("\nAll supplementary figures (S1, S2, S3, S7) generated successfully!")
+df_impl <- data %>%
+  filter(memory_mode == "high", mc == 100,
+         tp_type %in% c("fastga", "fastga-no-diff", "fastga-native", "fastga-native-nodiff")) %>%
+  filter(e %in% c(0.001, 0.01, 0.05, 0.10, 0.20)) %>%
+  mutate(
+    method = factor(case_when(
+      tp_type == "fastga"               ~ "FL-TP TPA",
+      tp_type == "fastga-no-diff"        ~ "FL-TP TPA nd",
+      tp_type == "fastga-native"         ~ "FL-TP 1aln",
+      tp_type == "fastga-native-nodiff"  ~ "FL-TP 1aln nd"), levels = impl_levels),
+    length_label = factor(case_when(l == 100 ~ "100 bp", l == 1000 ~ "1 Kbp",
+                                    l == 10000 ~ "10 Kbp", l == 100000 ~ "100 Kbp"),
+                          levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")),
+    error_label = factor(paste0(e * 100, "%"), levels = c("0.1%", "1%", "5%", "10%", "20%")),
+    size_bytes = size_tpa_bytes,
+    recon_ms   = (decompress_runtime_sec + decode_runtime_sec) * 1000,
+    recon_mb   = pmax(decompress_memory_kb, decode_memory_kb) / 1024
+  )
+
+impl_theme <- common_theme +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        panel.grid.minor.y = element_line(colour = "grey92", linewidth = 0.3))
+
+p_impl_size <- ggplot(df_impl, aes(error_label, size_bytes, fill = method)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  facet_wrap(~ length_label, nrow = 1, scales = "free_y") +
+  scale_fill_manual(values = impl_colors, name = "Method") +
+  scale_y_continuous(labels = bytes_lab, n.breaks = 6,
+                     expand = expansion(mult = c(0, 0.1))) +
+  labs(x = NULL, y = "File size") + impl_theme +
+  theme(legend.position = "none", axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+p_impl_time <- ggplot(df_impl, aes(error_label, recon_ms, fill = method)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  facet_wrap(~ length_label, nrow = 1, scales = "free_y") +
+  scale_fill_manual(values = impl_colors, name = "Method") +
+  scale_y_log10(expand = expansion(mult = c(0, 0.05)),
+                breaks = impl_log_major, minor_breaks = impl_log_minor,
+                labels = scales::label_number(scale_cut = scales::cut_short_scale())) +
+  labs(x = NULL, y = "Reconstruction time (ms)") + impl_theme +
+  theme(legend.position = "none", strip.text = element_blank(),
+        axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+p_impl_mem <- ggplot(df_impl, aes(error_label, recon_mb, fill = method)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  facet_wrap(~ length_label, nrow = 1, scales = "free_y") +
+  scale_fill_manual(values = impl_colors, name = "Method") +
+  scale_y_log10(expand = expansion(mult = c(0.02, 0.05)),
+                breaks = impl_log_major, minor_breaks = impl_log_minor,
+                labels = scales::label_number(scale_cut = scales::cut_short_scale())) +
+  labs(x = "Error rate", y = "Peak memory (MB)") + impl_theme +
+  theme(strip.text = element_blank())
+
+p_impl <- (p_impl_size / p_impl_time / p_impl_mem) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom") &
+  guides(fill = guide_legend(nrow = 1))
+
+ggsave(file.path(fig_dir, "figS10_fltp_implementation.png"), p_impl, width = 10, height = 9, dpi = 300, bg = "white")
+ggsave(file.path(fig_dir, "figS10_fltp_implementation.pdf"), p_impl, width = 10, height = 9, bg = "white")
+message("Figure S10 saved: figS10_fltp_implementation.pdf")
+
+message("\nAll supplementary figures (S1, S2, S3, S7, S10) generated successfully!")

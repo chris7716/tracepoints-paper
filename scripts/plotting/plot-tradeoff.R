@@ -34,11 +34,11 @@ message("Reading: ", tsv)
 data <- read_tsv(tsv, show_col_types = FALSE)
 
 # Colors/shapes match the other paper figures.
-lev  <- c("Plain CIGAR", "CG BGZIP", "FL-TP TPA", "FL-TP 1aln", "EB-TP TPA", "DB-TP TPA")
-cols <- c("FL-TP TPA" = "#7570b3", "FL-TP 1aln" = "#9e9ac8", "EB-TP TPA" = "#d95f02",
-          "DB-TP TPA" = "#377eb8", "CG BGZIP" = "#1b9e77", "Plain CIGAR" = "#555555")
-shp  <- c("FL-TP TPA" = 16, "FL-TP 1aln" = 17, "EB-TP TPA" = 16, "DB-TP TPA" = 16,
-          "CG BGZIP" = 18, "Plain CIGAR" = 4)
+lev  <- c("Plain CIGAR", "CG BGZIP", "FL-TP TPA", "FL-TP TPA nd", "FL-TP 1aln", "EB-TP TPA", "DB-TP TPA")
+cols <- c("FL-TP TPA" = "#7570b3", "FL-TP TPA nd" = "#54278f", "FL-TP 1aln" = "#9e9ac8",
+          "EB-TP TPA" = "#d95f02", "DB-TP TPA" = "#377eb8", "CG BGZIP" = "#1b9e77", "Plain CIGAR" = "#555555")
+shp  <- c("FL-TP TPA" = 16, "FL-TP TPA nd" = 15, "FL-TP 1aln" = 17, "EB-TP TPA" = 16,
+          "DB-TP TPA" = 16, "CG BGZIP" = 18, "Plain CIGAR" = 4)
 
 mk_labels <- function(d) d %>% mutate(
   length_label = factor(case_when(
@@ -56,9 +56,10 @@ tp <- data %>%
   filter(!(tp_type == "standard" & mc == 16)) %>%
   filter(tp_type != "fastga-native") %>%
   mutate(method = case_when(
-           tp_type == "fastga"       ~ "FL-TP TPA",
-           cm == "edit-distance"     ~ "EB-TP TPA",
-           cm == "diagonal-distance" ~ "DB-TP TPA"),
+           tp_type == "fastga"         ~ "FL-TP TPA",
+           tp_type == "fastga-no-diff" ~ "FL-TP TPA nd",
+           cm == "edit-distance"       ~ "EB-TP TPA",
+           cm == "diagonal-distance"   ~ "DB-TP TPA"),
          size = size_tpa_bytes,
          time = decompress_runtime_sec + decode_runtime_sec) %>%
   mk_labels() %>% arrange(method, mc) %>%
@@ -99,7 +100,7 @@ p <- ggplot(allpts, aes(x = size, y = time, color = method, shape = method)) +
   scale_color_manual(values = cols, name = "Method", limits = lev) +
   scale_shape_manual(values = shp, name = "Method", limits = lev) +
   labs(x = "File size", y = "Reconstruction time (sec)") +
-  guides(color = guide_legend(nrow = 1), shape = guide_legend(nrow = 1)) +
+  guides(color = guide_legend(nrow = 2), shape = guide_legend(nrow = 2)) +
   theme_bw(base_size = 12) +
   theme(
     legend.position = "bottom",

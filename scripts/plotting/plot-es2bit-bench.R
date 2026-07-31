@@ -22,8 +22,8 @@ raw <- raw %>%
     eps = as.numeric(paste0("0.", str_sub(eps_code, 2)))
   )
 
-methods <- c("cigar", "es2bit", "fltp", "ebtp", "dbtp")
-labels  <- c("CIGAR TEXT", "ES-2bit", "FL-TP TPA", "EB-TP TPA", "DB-TP TPA")
+methods <- c("cigar", "es2bit", "fltp", "fltp_nd", "ebtp", "dbtp")
+labels  <- c("CIGAR TEXT", "ES-2bit", "FL-TP", "FL-TP nd", "EB-TP", "DB-TP")
 
 pivot_metric <- function(df, suffix, col_name) {
   df %>%
@@ -58,9 +58,10 @@ df <- pivot_metric(raw, "disk_bits_per_e", "disk_bits_per_e") %>%
 method_colors <- c(
   "CIGAR TEXT" = "#1b9e77",  # teal (same as CG BGZIP in paper)
   "ES-2bit"    = "#984ea3",  # dark magenta
-  "FL-TP TPA"  = "#7570b3",  # purple
-  "EB-TP TPA"  = "#d95f02",  # orange
-  "DB-TP TPA"  = "#377eb8"   # blue
+  "FL-TP"    = "#7570b3",  # purple
+  "FL-TP nd" = "#9e9ac8",  # light purple
+  "EB-TP"    = "#d95f02",  # orange
+  "DB-TP"    = "#377eb8"   # blue
 )
 
 common_theme <- theme_bw(base_size = 15) +

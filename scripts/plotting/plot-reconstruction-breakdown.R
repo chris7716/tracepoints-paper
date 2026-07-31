@@ -23,13 +23,15 @@ mk <- function(d) d %>% mutate(
 # Re-alignment time = decode (FL-TP) / banded heuristic decode (EB-TP, DB-TP), matching
 # the reconstruction reported in Figure 3.
 df <- data %>% filter(memory_mode == "high") %>%
-  filter((tp_type == "fastga" & mc == 100) | (tp_type == "standard" & mc == 32)) %>%
+  filter((tp_type == "fastga" & mc == 100) | (tp_type == "fastga-no-diff" & mc == 100) | (tp_type == "standard" & mc == 32)) %>%
   mutate(method = factor(case_when(tp_type == "fastga" ~ "FL-TP TPA",
+                                   tp_type == "fastga-no-diff" ~ "FL-TP TPA nd",
                                    cm == "edit-distance" ~ "EB-TP TPA",
                                    cm == "diagonal-distance" ~ "DB-TP TPA"),
-                         levels = c("FL-TP TPA","EB-TP TPA","DB-TP TPA")),
+                         levels = c("FL-TP TPA","FL-TP TPA nd","EB-TP TPA","DB-TP TPA")),
          Decompression  = decompress_runtime_sec,
-         `Re-alignment` = if_else(tp_type == "fastga", decode_runtime_sec, decode_heuristic_runtime_sec)) %>%
+         # Single banded decode for every method (FL-TP no-diff falls back to exact WFA internally).
+         `Re-alignment` = decode_runtime_sec) %>%
   mk()
 
 long <- df %>% select(method, length_label, error_label, Decompression, `Re-alignment`) %>%
