@@ -135,10 +135,9 @@ p_3r_row1 <- ggplot(plot_long_3r_row1, aes(x = error_label, y = ratio, fill = fo
   common_theme +
   theme(legend.position = "none", axis.text.x = element_blank(), axis.ticks.x = element_blank())
 
-# Broken y-axis for row 2 (10 Kb, 100 Kb): expand the 0-0.05 range visually
-# so small tracepoint ratios are legible, while BGZIP/FL-TP bars (up to ~0.3)
-# remain visible above the break.
-low_max <- 0.05
+# Broken y-axis for row 2 (10 Kb, 100 Kb): expand the 0-0.04 range visually
+# so small tracepoint ratios are legible.
+low_max <- 0.04
 high_max <- 1.10     # 0.1% pushes FL-TP FASTGA to ~1.05 at 10 Kb (TPA larger than raw CIGAR when edits are few)
 low_visual_end <- 0.40
 gap_visual <- 0.02
