@@ -443,7 +443,9 @@ human_data <- read_tsv(file.path(real_data_dir, "hprcv2-25k.benchmark.results.ts
 # (score_* = "NA"); distance column added. Real-data stats use EB/DB only.
 human_data <- human_data %>%
   rename(num_alignments = num_output_alignments) %>%
-  filter(cm %in% c("edit-distance", "diagonal-distance"), mc != 16)
+  filter(cm %in% c("edit-distance", "diagonal-distance"), mc != 16) %>%
+  mutate(across(c(decode_runtime_sec, decode_memory_kb, num_alignments,
+                  score_identical, score_improved, score_degraded), as.numeric))
 human_stats <- compute_method_stats(human_data)
 
 cat("Human summary by method (all thresholds):\n")

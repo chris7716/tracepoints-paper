@@ -14,8 +14,8 @@ if (length(args) != 1) stop("usage: compute_es2bit_stats.R <all.tsv>")
 raw <- read_tsv(args[1], show_col_types = FALSE)
 raw <- raw %>%
   mutate(
-    n   = as.integer(str_extract(basename(file), "(?<=set_)\\d+")),
-    eps_code = str_extract(basename(file), "(?<=_)\\d+(?=\\.paf)"),
+    n   = as.integer(str_match(basename(file), "^set_(\\d+)_")[, 2]),
+    eps_code = str_match(basename(file), "_(\\d+)\\.paf$")[, 2],
     eps = as.numeric(paste0("0.", str_sub(eps_code, 2)))
   )
 
@@ -30,10 +30,10 @@ cat("=== Discussion paragraph numbers ===\n\n")
 
 cat(sprintf("Condition: n=%s, eps=%s (mean_e=%.1f)\n",
     scales::comma(max_n), max_eps, r$mean_e))
-cat(sprintf("DB-TP disk bits/edit: %.2f\n", r$dbtp_disk_bits_per_e))
-cat(sprintf("ES-2bit disk bits/edit: %.2f\n", r$es2bit_disk_bits_per_e))
+cat(sprintf("DB-TP TPA bits/edit: %.2f\n", r$dbtp_tpa_bits_per_e))
+cat(sprintf("ES-2bit TPA bits/edit: %.2f\n", r$es2bit_tpa_bits_per_e))
 cat(sprintf("Fold difference (ES-2bit / DB-TP): %.0fx\n",
-    r$es2bit_disk_bits_per_e / r$dbtp_disk_bits_per_e))
+    r$es2bit_tpa_bits_per_e / r$dbtp_tpa_bits_per_e))
 cat(sprintf("ES-2bit decode ns/edit (all conditions): %.0f -- %.0f\n",
     min(raw$es2bit_dec_ns_per_e), max(raw$es2bit_dec_ns_per_e)))
 
@@ -50,8 +50,8 @@ cat(sprintf("DB-TP / ES-2bit decode ratio: %.1fx -- %.1fx\n",
 
 # EB-TP bits/edit at n=100k
 r100k <- raw %>% filter(n == max_n)
-cat(sprintf("EB-TP disk bits/edit at n=%s: %.2f -- %.2f\n",
-    scales::comma(max_n), min(r100k$ebtp_disk_bits_per_e), max(r100k$ebtp_disk_bits_per_e)))
+cat(sprintf("EB-TP TPA bits/edit at n=%s: %.2f -- %.2f\n",
+    scales::comma(max_n), min(r100k$ebtp_tpa_bits_per_e), max(r100k$ebtp_tpa_bits_per_e)))
 
 cat("\n=== Supplementary section numbers ===\n\n")
 
@@ -60,13 +60,14 @@ cat(sprintf("DB-TP decode ns/edit at n=%s: %.0f -- %.0f\n",
     scales::comma(max_n),
     min(r100k$dbtp_dec_ns_per_e), max(r100k$dbtp_dec_ns_per_e)))
 cat(sprintf("CIGAR bits/edit (all conditions): %.0f -- %.0f\n",
-    min(raw$cigar_disk_bits_per_e), max(raw$cigar_disk_bits_per_e)))
+    min(raw$cigar_tpa_bits_per_e), max(raw$cigar_tpa_bits_per_e)))
 
 # Gzip gap
 cat(sprintf("After gzip at n=%s, eps=%s:\n", scales::comma(max_n), max_eps))
-cat(sprintf("  DB-TP gz B/edit: %.4f\n", r$dbtp_gz_B_per_e))
-cat(sprintf("  ES-2bit gz B/edit: %.4f\n", r$es2bit_gz_B_per_e))
-gz_ratio <- r$es2bit_gz_B_per_e / r$dbtp_gz_B_per_e
-cat(sprintf("  Gzip ratio (ES-2bit / DB-TP): %.0fx\n", gz_ratio))
+cat(sprintf("  DB-TP gz bits/edit: %.4f\n", r$dbtp_tpa_gz_bits_per_e))
+cat(sprintf("  ES-2bit gz bits/edit: %.4f\n", r$es2bit_tpa_gz_bits_per_e))
+# The paper compares gzipped ES-2bit against DB-TP as actually stored (not gzipped).
+gz_ratio <- r$es2bit_tpa_gz_bits_per_e / r$dbtp_tpa_bits_per_e
+cat(sprintf("  Ratio (gzipped ES-2bit / DB-TP as stored): %.0fx\n", gz_ratio))
 
 cat("\nDone.\n")

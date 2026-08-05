@@ -34,11 +34,13 @@ message("Reading: ", tsv)
 data <- read_tsv(tsv, show_col_types = FALSE)
 
 # Colors/shapes match the other paper figures.
-lev  <- c("Plain CIGAR", "CG BGZIP", "FL-TP TPA", "FL-TP TPA nd", "FL-TP 1aln", "EB-TP TPA", "DB-TP TPA")
-cols <- c("FL-TP TPA" = "#7570b3", "FL-TP TPA nd" = "#54278f", "FL-TP 1aln" = "#9e9ac8",
+lev  <- c("Plain CIGAR", "CG BGZIP", "FL-TP TPA", "FL-TP TPA nd",
+          "FL-TP 1aln", "FL-TP 1aln nd", "EB-TP TPA", "DB-TP TPA")
+cols <- c("FL-TP TPA" = "#7570b3", "FL-TP TPA nd" = "#54278f",
+          "FL-TP 1aln" = "#9e9ac8", "FL-TP 1aln nd" = "#bcbddc",
           "EB-TP TPA" = "#d95f02", "DB-TP TPA" = "#377eb8", "CG BGZIP" = "#1b9e77", "Plain CIGAR" = "#555555")
-shp  <- c("FL-TP TPA" = 16, "FL-TP TPA nd" = 15, "FL-TP 1aln" = 17, "EB-TP TPA" = 16,
-          "DB-TP TPA" = 16, "CG BGZIP" = 18, "Plain CIGAR" = 4)
+shp  <- c("FL-TP TPA" = 15, "FL-TP TPA nd" = 0, "FL-TP 1aln" = 17, "FL-TP 1aln nd" = 2,
+          "EB-TP TPA" = 16, "DB-TP TPA" = 16, "CG BGZIP" = 18, "Plain CIGAR" = 4)
 
 mk_labels <- function(d) d %>% mutate(
   length_label = factor(case_when(
@@ -54,7 +56,7 @@ mk_labels <- function(d) d %>% mutate(
 tp <- data %>%
   filter(decompress_correct == TRUE | decompress_correct == "true") %>%
   filter(!(tp_type == "standard" & mc == 16)) %>%
-  filter(tp_type != "fastga-native") %>%
+  filter(!(tp_type %in% c("fastga-native", "fastga-native-nodiff"))) %>%
   filter(!(tp_type %in% c("fastga", "fastga-no-diff") & mc > 2000)) %>%
   mutate(method = case_when(
            tp_type == "fastga"         ~ "FL-TP TPA",
@@ -75,16 +77,27 @@ bgz <- base %>% transmute(l, e, method = "CG BGZIP", mc = NA_real_,
                           size = size_cigar_bgzip_bytes,
                           time = bgzip_decompress_runtime_sec, kind = "base") %>% mk_labels()
 
-# FASTGA reference: a single FL-TP 1aln operating point per panel.
-# Keep its trace spacing in mc (=100) so the point is labelled like the FL-TP TPA sweep.
-aln <- data %>% filter(tp_type == "fastga-native") %>%
-  mutate(method = "FL-TP 1aln", size = size_tpa_bytes,
+# FASTGA reference: single FL-TP 1aln operating points per panel (with and without
+# the per-segment diff count). Keep the trace spacing in mc (=100) so they are
+# labelled like the FL-TP TPA sweep.
+aln <- data %>% filter(tp_type %in% c("fastga-native", "fastga-native-nodiff")) %>%
+  mutate(method = if_else(tp_type == "fastga-native", "FL-TP 1aln", "FL-TP 1aln nd"),
+         size = size_tpa_bytes,
          time = decompress_runtime_sec + decode_runtime_sec, kind = "base") %>%
   mk_labels() %>% transmute(l, e, length_label, error_label, method, mc, size, time, kind)
 
 allpts  <- bind_rows(tp, aln, cig, bgz) %>% mutate(method = factor(method, levels = lev))
+# Guard: an unmapped tp_type would otherwise render as a grey point with a label
+# whose leader line appears to point at nothing (this is how fastga-native-nodiff slipped in).
+stopifnot(!any(is.na(allpts$method)))
 sweep   <- filter(allpts, kind == "sweep")
-labeled <- filter(allpts, !is.na(mc))   # sweeps + the FL-TP 1aln point
+# Label only the two ends of each sweep, plus the single FL-TP 1aln point. Labelling every
+# parameter value drowns the short-length panels, where all settings land on nearly the same
+# (size, time) and ggrepel throws twenty labels outward on long leader lines.
+labeled <- allpts %>% filter(!is.na(mc)) %>%
+  group_by(length_label, error_label, method) %>%
+  filter(kind != "sweep" | mc == min(mc) | mc == max(mc)) %>%
+  ungroup()
 
 p <- ggplot(allpts, aes(x = size, y = time, color = method, shape = method)) +
   geom_line(data = sweep, aes(group = method), linewidth = 0.5, alpha = 0.8) +

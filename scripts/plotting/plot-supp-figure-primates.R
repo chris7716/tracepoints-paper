@@ -161,8 +161,8 @@ p_peak_memory <- ggplot(df, aes(x = target_label, y = peak_memory_gb, fill = met
   geom_text(data = species_labels_df, aes(x = x, y = Inf, label = label),
             inherit.aes = FALSE, vjust = 1.5, size = 3.5, fontface = "plain") +
   color_scale +
-  scale_y_log10(expand = expansion(mult = c(0, 0.15))) +
-  labs(x = "Target genome", y = "Peak memory (GB)") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+  labs(x = "Target genome", y = "Peak memory (GiB)") +
   common_theme +
   theme(legend.position = "none", panel.grid.minor = element_blank())
 
@@ -185,7 +185,8 @@ ggsave(file.path(fig_dir, "figS4_primate_performance.pdf"),
 # Variant for reviewer: all four panels on log10 scale
 p_tpa_size_log <- p_tpa_size + scale_y_log10(expand = expansion(mult = c(0, 0.15)))
 p_tracepoints_log <- p_tracepoints + scale_y_log10(expand = expansion(mult = c(0, 0.15)))
-p_combined_alllog <- (p_tpa_size_log + p_tracepoints_log) / (p_decode_time + p_peak_memory) +
+p_peak_memory_log <- p_peak_memory + scale_y_log10(expand = expansion(mult = c(0, 0.15)))
+p_combined_alllog <- (p_tpa_size_log + p_tracepoints_log) / (p_decode_time + p_peak_memory_log) +
   plot_layout(guides = "collect") &
   theme(legend.position = "bottom")
 p_combined_alllog <- p_combined_alllog +

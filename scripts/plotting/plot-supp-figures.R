@@ -296,11 +296,11 @@ size_colors <- scale_fill_manual(
 )
 
 # Row 1 (100 bp, 1 Kb): linear free_y, no break needed
-p_sizes_row1 <- ggplot(
-    filter(sizes_long, length_label %in% c("100 bp", "1 Kbp")),
+p_sizes_100b <- ggplot(
+    filter(sizes_long, length_label == "100 bp"),
     aes(x = error_label, y = bytes, fill = format_label)) +
   geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
-  facet_wrap(~ length_label, nrow = 1, scales = "free_y") +
+  facet_wrap(~ length_label, nrow = 1) +
   size_colors +
   scale_y_continuous(labels = bytes_lab, n.breaks = 6,
                      expand = expansion(mult = c(0, 0.1)), minor_breaks = NULL) +
@@ -321,7 +321,13 @@ make_broken_size_panel <- function(df_panel, low_max, high_max,
 
   df_plot <- df_panel %>% mutate(bytes_plot = tf(pmin(bytes, high_max)))
 
-  low_ticks  <- pretty(c(0, low_max), n = 4); low_ticks <- low_ticks[low_ticks <= low_max]
+  # include low_max itself so the break value is labelled, and drop any
+  # pretty() tick that would sit almost on top of it
+  low_ticks  <- pretty(c(0, low_max), n = 4)
+  # drop any tick within half a step of the break, so its label cannot collide with the break label
+  low_step   <- if (length(low_ticks) > 1) diff(low_ticks)[1] else low_max
+  low_ticks  <- low_ticks[low_ticks < low_max - low_step / 2]
+  low_ticks  <- c(low_ticks, low_max)
   high_ticks <- pretty(c(low_max, high_max), n = 3); high_ticks <- high_ticks[high_ticks > low_max & high_ticks <= high_max]
   brks   <- c(tf(low_ticks), tf(high_ticks))
   labs_y <- bytes_lab(c(low_ticks, high_ticks))
@@ -341,10 +347,20 @@ make_broken_size_panel <- function(df_panel, low_max, high_max,
 }
 
 # Peak values (bytes): 10 Kb ≈ 16 MB; 100 Kb ≈ 150 MB
+p_sizes_1k <- make_broken_size_panel(filter(sizes_long, length_label == "1 Kbp"),
+                                     low_max = 6.0e5, high_max = 1.8e6) +
+  theme(axis.title.y = element_blank(), axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), axis.title.x = element_blank())
+
+# No guides="collect" here: the outer composition collects them, and a nested collect
+# would emit a second legend under this row.
+p_sizes_row1 <- p_sizes_100b + p_sizes_1k
+
+
 p_sizes_10k  <- make_broken_size_panel(filter(sizes_long, length_label == "10 Kbp"),
-                                       low_max = 2.0e6,  high_max = 1.7e7)
+                                       low_max = 1.5e6,  high_max = 1.7e7)
 p_sizes_100k <- make_broken_size_panel(filter(sizes_long, length_label == "100 Kbp"),
-                                       low_max = 1.5e7, high_max = 1.7e8) +
+                                       low_max = 1.1e7, high_max = 1.7e8) +
   theme(axis.title.y = element_blank())
 
 library(patchwork)
@@ -357,7 +373,7 @@ p_sizes_row2 <- p_sizes_row2 & labs(x = "Error rate")
 p_sizes <- p_sizes_row1 / p_sizes_row2 +
   plot_layout(heights = c(0.45, 0.55), guides = "collect") &
   theme(legend.position = "bottom") &
-  guides(fill = guide_legend(nrow = 2))
+  guides(fill = guide_legend(nrow = 1))   # one row, matching Fig 2 (compression_ratios)
 
 ggsave(file.path(fig_dir, "figS7_absolute_sizes.png"), p_sizes, width = 10, height = 6, dpi = 300, bg = "white")
 ggsave(file.path(fig_dir, "figS7_absolute_sizes.pdf"), p_sizes, width = 10, height = 6, bg = "white")
