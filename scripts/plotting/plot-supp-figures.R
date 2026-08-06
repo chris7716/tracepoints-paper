@@ -410,10 +410,19 @@ df_impl <- data %>%
                                     l == 10000 ~ "10 Kbp", l == 100000 ~ "100 Kbp"),
                           levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")),
     error_label = factor(paste0(e * 100, "%"), levels = c("0.1%", "1%", "5%", "10%", "20%")),
-    size_bytes = size_tpa_bytes,
     recon_ms   = (decompress_runtime_sec + decode_runtime_sec) * 1000,
     recon_mb   = pmax(decompress_memory_kb, decode_memory_kb) / 1024
   )
+
+# A .1aln carries its random-access index in its own footer, so its file size already
+# includes it; TPA keeps the index in a separate .tpa.idx. Add that index to the TPA
+# series so the size panel compares like with like.
+idx_sim <- read_tsv(file.path(data_dir, "simulated-data", "fltp-tpa-index-sizes.tsv"),
+                    show_col_types = FALSE) %>%
+  select(l, e, tp_type, idx_bytes)
+df_impl <- df_impl %>%
+  left_join(idx_sim, by = c("l", "e", "tp_type")) %>%
+  mutate(size_bytes = size_tpa_bytes + coalesce(idx_bytes, 0))
 
 impl_theme <- common_theme +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
