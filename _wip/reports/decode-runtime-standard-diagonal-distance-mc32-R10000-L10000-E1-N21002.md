@@ -1,1 +1,0 @@
-Report written: reports/run_standard_N21002_diagonal-distance_mc32_20260115-063642.md
