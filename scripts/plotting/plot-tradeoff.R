@@ -3,13 +3,13 @@
 # Space-time tradeoff figure (reviewer request):
 #   x = stored file size (bytes, log), y = reconstruction time (stored format -> PAF),
 #   one connected line per tracepoint method across its parameter sweep
-#   (FL-TP spacing l, EB-TP delta, DB-TP b), plus the two CIGAR baselines as single
-#   points per panel (plain CIGAR and BGZIP-compressed CIGAR), faceted by sequence
-#   length x error rate.
+#   (FL-TP spacing l, EB-TP delta, DB-TP b), plus the BGZIP-compressed CIGAR baseline as a
+#   single point per panel, faceted by sequence length x error rate. The plain CIGAR
+#   is omitted (reviewer request) so the tracepoint range is wider.
 #
-# The y-axis uses a pseudo-log (symlog) scale so the baselines, whose reconstruction
-# time is ~0 (plain CIGAR is already the alignment; BGZIP only decompresses), can be
-# shown at 0 while the tracepoint times keep their log-like spread.
+# The y-axis uses a pseudo-log (symlog) scale so the BGZIP baseline, whose
+# decompression time is near 0, can be shown at 0 while the tracepoint times keep
+# their log-like spread.
 #
 # Input:  data/simulated-data/benchmark.results.tsv
 # Output: paper/figures/figS8_space_time_tradeoff.{png,pdf}
@@ -34,13 +34,13 @@ message("Reading: ", tsv)
 data <- read_tsv(tsv, show_col_types = FALSE)
 
 # Colors/shapes match the other paper figures.
-lev  <- c("Plain CIGAR", "CG BGZIP", "FL-TP TPA", "FL-TP TPA nd",
+lev  <- c("CG BGZIP", "FL-TP TPA", "FL-TP TPA nd",
           "FL-TP 1aln", "FL-TP 1aln nd", "EB-TP TPA", "DB-TP TPA")
 cols <- c("FL-TP TPA" = "#7570b3", "FL-TP TPA nd" = "#54278f",
           "FL-TP 1aln" = "#9e9ac8", "FL-TP 1aln nd" = "#bcbddc",
-          "EB-TP TPA" = "#d95f02", "DB-TP TPA" = "#377eb8", "CG BGZIP" = "#1b9e77", "Plain CIGAR" = "#555555")
+          "EB-TP TPA" = "#d95f02", "DB-TP TPA" = "#377eb8", "CG BGZIP" = "#1b9e77")
 shp  <- c("FL-TP TPA" = 15, "FL-TP TPA nd" = 0, "FL-TP 1aln" = 17, "FL-TP 1aln nd" = 2,
-          "EB-TP TPA" = 16, "DB-TP TPA" = 16, "CG BGZIP" = 18, "Plain CIGAR" = 4)
+          "EB-TP TPA" = 16, "DB-TP TPA" = 16, "CG BGZIP" = 18)
 
 mk_labels <- function(d) d %>% mutate(
   length_label = factor(case_when(
@@ -68,11 +68,8 @@ tp <- data %>%
   mk_labels() %>% arrange(method, mc) %>%
   transmute(l, e, length_label, error_label, method, mc, size, time, kind = "sweep")
 
-# CIGAR baselines: one point per (length, error). Plain CIGAR needs no reconstruction
-# (time = 0); BGZIP only decompresses (bgzip_decompress_runtime_sec).
+# BGZIP baseline: one point per (length, error)
 base <- data %>% filter(memory_mode == "high") %>% distinct(l, e, .keep_all = TRUE)
-cig <- base %>% transmute(l, e, method = "Plain CIGAR", mc = NA_real_,
-                          size = size_cigar_bytes, time = 0, kind = "base") %>% mk_labels()
 bgz <- base %>% transmute(l, e, method = "CG BGZIP", mc = NA_real_,
                           size = size_cigar_bgzip_bytes,
                           time = bgzip_decompress_runtime_sec, kind = "base") %>% mk_labels()
@@ -86,7 +83,7 @@ aln <- data %>% filter(tp_type %in% c("fastga-native", "fastga-native-nodiff")) 
          time = decompress_runtime_sec + decode_runtime_sec, kind = "base") %>%
   mk_labels() %>% transmute(l, e, length_label, error_label, method, mc, size, time, kind)
 
-allpts  <- bind_rows(tp, aln, cig, bgz) %>% mutate(method = factor(method, levels = lev))
+allpts  <- bind_rows(tp, aln, bgz) %>% mutate(method = factor(method, levels = lev))
 # Guard: an unmapped tp_type would otherwise render as a grey point with a label
 # whose leader line appears to point at nothing (this is how fastga-native-nodiff slipped in).
 stopifnot(!any(is.na(allpts$method)))
