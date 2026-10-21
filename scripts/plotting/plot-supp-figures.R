@@ -147,17 +147,34 @@ df_tp_counts <- data %>%
     error_label = factor(paste0(e * 100, "%"), levels = c("0.1%", "1%", "5%", "10%", "20%"))
   )
 
-p_tp_counts <- ggplot(df_tp_counts, aes(x = error_label, y = num_tracepoints, fill = method)) +
-  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
-  facet_wrap(~ length_label, nrow = 2, scales = "free_y") +
-  scale_y_log10(labels = scales::comma) +
-  scale_fill_manual(values = c("FL-TP" = "#7570b3", "EB-TP" = "#d95f02", "DB-TP" = "#377eb8"), name = "Method") +
-  labs(
-    x = "Error rate",
-    y = "Number of tracepoints"
-  ) +
-  common_theme +
-  guides(fill = guide_legend(nrow = 1))
+message("Tracepoints per alignment range: ", paste(range(df_tp_counts$num_tracepoints / df_tp_counts$num_input_alignments), collapse = " - "))
+stopifnot(all(df_tp_counts$num_input_alignments > 0))
+# One plot per length, aligned by patchwork
+library(patchwork)
+y_label <- function(x) format(x, big.mark = ",", trim = TRUE, drop0trailing = TRUE, scientific = FALSE)
+pseudo_y <- scale_y_continuous(trans = scales::pseudo_log_trans(sigma = 0.1, base = 10),
+                               breaks = c(0, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000),
+                               labels = y_label, expand = expansion(mult = c(0, 0.05)))
+linear_y <- scale_y_continuous(breaks = scales::breaks_pretty(), labels = y_label,
+                               expand = expansion(mult = c(0, 0.05)))
+linear_y_1kbp <- scale_y_continuous(breaks = 0:10, labels = y_label, expand = expansion(mult = c(0, 0.05)))
+tp_panel <- function(len, sc, bottom, ytext = 1) {
+  d <- df_tp_counts %>% filter(length_label == len)
+  stopifnot(nrow(d) == 15)
+  p <- ggplot(d, aes(x = error_label, y = num_tracepoints / num_input_alignments, fill = method)) +
+    geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+    facet_wrap(~ length_label) + sc +
+    scale_fill_manual(values = c("FL-TP" = "#7570b3", "EB-TP" = "#d95f02", "DB-TP" = "#377eb8"), name = "Method") +
+    labs(x = "Error rate", y = "Tracepoints per alignment") + common_theme +
+    theme(axis.text.y = element_text(size = rel(ytext))) + guides(fill = guide_legend(nrow = 1))
+  if (!bottom) p <- p + theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), axis.title.x = element_blank())
+  p
+}
+p_tp_counts <- wrap_plots(
+  tp_panel("100 bp", linear_y, FALSE), tp_panel("1 Kbp", linear_y_1kbp, FALSE),
+  tp_panel("10 Kbp", pseudo_y, TRUE), tp_panel("100 Kbp", pseudo_y, TRUE, ytext = 0.95),
+  ncol = 2) +
+  plot_layout(guides = "collect", axis_titles = "collect") & theme(legend.position = "bottom")
 
 ggsave(file.path(fig_dir, "figS2_tracepoint_counts.png"), p_tp_counts, width = 10, height = 6, dpi = 300, bg = "white")
 ggsave(file.path(fig_dir, "figS2_tracepoint_counts.pdf"), p_tp_counts, width = 10, height = 6, bg = "white")
