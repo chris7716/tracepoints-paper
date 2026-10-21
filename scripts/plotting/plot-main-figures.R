@@ -135,44 +135,19 @@ p_3r_row1 <- ggplot(plot_long_3r_row1, aes(x = error_label, y = ratio, fill = fo
   common_theme +
   theme(legend.position = "none", axis.text.x = element_blank(), axis.ticks.x = element_blank())
 
-# Broken y-axis for row 2 (10 Kb, 100 Kb): expand the 0-0.04 range visually
+# Pseudo-log y-axis for row 2 (10 Kb, 100 Kb)
 # so small tracepoint ratios are legible.
-low_max <- 0.04
-high_max <- 1.10     # 0.1% pushes FL-TP FASTGA to ~1.05 at 10 Kb (TPA larger than raw CIGAR when edits are few)
-low_visual_end <- 0.40
-gap_visual <- 0.02
-high_visual_start <- low_visual_end + gap_visual
-high_visual_end <- 1.00
-low_scale <- low_visual_end / low_max
-high_scale <- (high_visual_end - high_visual_start) / (high_max - low_max)
-transform_y <- function(y) {
-  ifelse(y <= low_max, y * low_scale,
-         high_visual_start + (y - low_max) * high_scale)
-}
+brk_r2 <- c(0, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5)
+message("Row 2 ratio range: ", signif(min(plot_long_3r_row2$ratio), 3), " - ", signif(max(plot_long_3r_row2$ratio), 3))
+stopifnot(max(plot_long_3r_row2$ratio) <= 0.6)
 
-plot_long_3r_row2 <- plot_long_3r_row2 %>%
-  mutate(ratio_plot = transform_y(pmin(ratio, high_max)))
-
-break_data <- data.frame(length_label = factor(c("10 Kbp", "100 Kbp"),
-  levels = c("100 bp", "1 Kbp", "10 Kbp", "100 Kbp")))
-
-low_ticks <- seq(0, low_max, by = 0.01)
-high_ticks <- c(0.25, 0.5, 0.75, 1.0)
-breaks_r2 <- c(transform_y(low_ticks), transform_y(high_ticks))
-labels_r2 <- c(sprintf("%.2f", low_ticks), sprintf("%.2f", high_ticks))
-
-p_3r_row2 <- ggplot(plot_long_3r_row2, aes(x = error_label, y = ratio_plot, fill = format_label)) +
+p_3r_row2 <- ggplot(plot_long_3r_row2, aes(x = error_label, y = ratio, fill = format_label)) +
   geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
-  geom_rect(data = break_data,
-            aes(xmin = -Inf, xmax = Inf,
-                ymin = low_visual_end, ymax = high_visual_start),
-            inherit.aes = FALSE, fill = "white") +
-  geom_hline(data = break_data, aes(yintercept = low_visual_end), linewidth = 0.4) +
-  geom_hline(data = break_data, aes(yintercept = high_visual_start), linewidth = 0.4) +
   facet_wrap(~ length_label, nrow = 1) +
   color_scale +
-  scale_y_continuous(breaks = breaks_r2, labels = labels_r2,
-                     expand = expansion(mult = c(0, 0.05))) +
+  scale_y_continuous(trans = scales::pseudo_log_trans(sigma = 0.001, base = 10),
+                     breaks = brk_r2, labels = as.character(brk_r2), limits = c(0, 0.6),
+                     expand = expansion(mult = c(0, 0.02))) +
   labs(x = "Error rate", y = "Compression ratio") +
   common_theme +
   guides(fill = guide_legend(nrow = 1))
