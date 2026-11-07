@@ -19,8 +19,11 @@ align_benchmark=/moosefs/guarracino/git/WFA2-lib/bin/align_benchmark
 
 out_to_paf=$dir_base/scripts/out-to-paf.py
 pafcheck=/moosefs/guarracino/git/pafcheck/target/release/pafcheck
+bgzip=/home/guarracino/.local/bin/bgzip
 
 cigzip=$scratch_dir/cigzip/target/release/cigzip
+# cigzip branch wfa2-add8f26 (f9daa20: WFA2-lib add8f26 via lib_wfa2 1f8972d), built natively on every node:
+# rm -rf /scratch/cigzip/ && cp /moosefs/guarracino/git/cigzip/ /scratch/cigzip/ -r && cd /scratch/cigzip/ && bash /moosefs/guarracino/rust-build-fix/build.sh
 
 # Use tracepoints-dev branch from https://github.com/AndreaGuarracino/FASTGA.git
 fastga_bin=$scratch_dir/FASTGA
@@ -66,6 +69,7 @@ for l in 100 1000 10000 100000; do
           print substr($0, 2)
           counter++
       }' $dir_base/simulated-data/seqs/$prefix.seq > $dir_base/simulated-data/seqs/$prefix.fa
+    rm -f $dir_base/simulated-data/seqs/$prefix.fa.fai
 
     # Convert OUT to PAF
     python3 $out_to_paf $dir_base/simulated-data/alns/$prefix.out $dir_base/simulated-data/alns/$prefix.paf
@@ -112,6 +116,9 @@ stage_inputs(){
 }
 export -f stage_inputs
 
+# To start clean
+rm -rf $scratch_dir/staged
+
 # Precompute CIGAR sizes (fast, run sequentially)
 : > "$TMP_DIR/cigar_sizes.txt"
 for l in 100 1000 10000 100000; do
@@ -151,13 +158,13 @@ for l in 100 1000 10000 100000; do
             if ($i ~ /^cg:Z:/) { out = out "\t" $i; break }
         }
         print out
-    }' "$input_paf" | bgzip -l9 -c > "$bgzip_scratch"
+    }' "$input_paf" | $bgzip -l9 -c > "$bgzip_scratch"
     size_cigar_bgzip=$(wc -c < "$bgzip_scratch")
     cp -f "$bgzip_scratch" "$bgzip_file"
 
     # Benchmark bgzip decompression
     bgzip_decomp_log="$dir_base/simulated-data/decompress/$prefix.bgzip_decompress.log"
-    \time -v bgzip -d -@ $(nproc) -c "$bgzip_scratch" > $scratch_dir/${prefix}.cigar.paf 2> "$bgzip_decomp_log"
+    \time -v $bgzip -d -@ $(nproc) -c "$bgzip_scratch" > $scratch_dir/${prefix}.cigar.paf 2> "$bgzip_decomp_log"
     rm -f $scratch_dir/${prefix}.cigar.paf
 
     bgzip_decomp_runtime_raw=$(grep "Elapsed (wall clock)" "$bgzip_decomp_log" | sed 's/.*: //')
@@ -262,6 +269,10 @@ run_benchmark() {
     
     prefix2=$tp_type.$cm.$mc.$memory_mode
     full_prefix="$prefix.$prefix2"
+    # Resume: skip a job whose result is newer than its input PAF (EB16 is also the warm-up: never skipped)
+    if [ "$prefix2" != "standard.edit-distance.16.$memory_mode" ] && [ "$TMP_DIR/$full_prefix.result.tsv" -nt "$input_paf" ]; then
+        echo "SKIP (already done): $full_prefix"; return 0
+    fi
     [[ "$tp_type" == fastga* ]] && cmd_args="" || cmd_args="--complexity-metric $cm"
     # Compression strategy
     if [ "$tp_type" = "fastga" ]; then
@@ -350,9 +361,14 @@ run_benchmark() {
         # encode (PAFtoALN); both sources are the single .fa GDB, so all names resolve
         enc_rt_sum=0; enc_mem_sum=0
         for _rep in $(seq 1 $num_repeats); do
-            rm -f "$job_scratch/$prefix.1aln"
-            \time -v $PAFtoALN $nflag -T$FASTGA_THREADS "$job_scratch/$prefix.paf" "$job_scratch/$prefix.1gdb" "$job_scratch/$prefix.1gdb" \
-                > /dev/null 2> "$encode_log" || { guard "PAFtoALN" $? "$encode_log"; }
+            # Retry: rare, load-dependent PAFtoALN -T96 heap-corruption abort that clears on re-run (as in the real-data block)
+            for _try in 1 2 3; do
+                rm -f "$job_scratch/$prefix.1aln"
+                \time -v $PAFtoALN $nflag -T$FASTGA_THREADS "$job_scratch/$prefix.paf" "$job_scratch/$prefix.1gdb" "$job_scratch/$prefix.1gdb" \
+                    > /dev/null 2> "$encode_log" && break
+                echo "WARN: PAFtoALN attempt $_try failed for $full_prefix: $(tail -1 "$encode_log")" >&2
+                [ $_try -eq 3 ] && guard "PAFtoALN" 1 "$encode_log"
+            done
             enc_rt_sum=$(echo "$enc_rt_sum + $(parse_time_log "$encode_log")" | bc -l)
             enc_mem_sum=$((enc_mem_sum + $(parse_memory_log "$encode_log")))
         done
@@ -361,12 +377,16 @@ run_benchmark() {
         size_1aln=$(wc -c < "$job_scratch/$prefix.1aln")
         # number of tracepoints in the .1aln: sum of the per-alignment trace-point list lengths
         # (each 'T' line's count). A pure-match alignment is one (0,0) tracepoint, matching cigzip.
-        num_1aln_tp=$($ONEview "$job_scratch/$prefix.1aln" 2>/dev/null | awk '$1=="T"{s+=$2} END{printf "%.0f\n", s}')   # %.0f, not print: awk renders >2^31 as %.6g
+        num_1aln_tp=$($ONEview -H "$job_scratch/$prefix.1aln" 2>/dev/null | awk '$1=="+" && $2=="T"{s=$3} END{printf "%.0f\n", s}')   # header "+ T" total, same as summing every T line (A/B 2026-10-25)
 
         # decode (ALNtoPAF -x reconstructs the optimal X/= CIGAR)
         dec_rt_sum=0; dec_mem_sum=0
         for _rep in $(seq 1 $num_repeats); do
-            ( cd "$job_scratch" && \time -v $ALNtoPAF -x -T$FASTGA_THREADS "$job_scratch/$prefix.1aln" > "$decode_paf" 2> "$decode_log" ) || { guard "ALNtoPAF" $? "$decode_log"; }
+            for _try in 1 2 3; do   # same retry as PAFtoALN
+                ( cd "$job_scratch" && \time -v $ALNtoPAF -x -T$FASTGA_THREADS "$job_scratch/$prefix.1aln" > "$decode_paf" 2> "$decode_log" ) && break
+                echo "WARN: ALNtoPAF -x attempt $_try failed for $full_prefix: $(tail -1 "$decode_log")" >&2
+                [ $_try -eq 3 ] && guard "ALNtoPAF" 1 "$decode_log"
+            done
             dec_rt_sum=$(echo "$dec_rt_sum + $(parse_time_log "$decode_log")" | bc -l)
             dec_mem_sum=$((dec_mem_sum + $(parse_memory_log "$decode_log")))
         done
@@ -410,15 +430,9 @@ run_benchmark() {
     # Measure subsetted TP size (this is what we compare against CIGAR size)
     size_tp=$(wc -c < "$tp_paf")
     
-    num_tps=$(awk -F'\t' '{
-        for (i = 13; i <= NF; i++) {
-            if ($i ~ /^tp:Z:/) {
-                val = substr($i, 6)
-                if (val != "") { n = split(val, arr, ";"); sum += n }
-                break
-            }
-        }
-    } END { printf "%.0f\n", sum }' "$tp_paf")   # %.0f, not print: awk renders >2^31 as %.6g
+    # Tracepoints = ';' in the tp:Z: column (13th of $tp_paf) + non-empty tp:Z: fields.
+    # Same count as the awk split() it replaces (A/B 2026-10-25), up to 1.7x faster on FL-TP l=100.
+    num_tps=$(( $(cut -f13 "$tp_paf" | tr -cd ';' | wc -c) + $(cut -f13 "$tp_paf" | grep -c '^tp:Z:.') ))
     
     # --- COMPRESS (using subsetted PAF) ---
     compress_runtime_sum=0
@@ -611,6 +625,8 @@ echo "Benchmark complete. Results in: $REPORT"
 
 ### Indel-skewed check
 
+The I/D sweep (1,000 pairs, 10 Kbp, 20% divergence, `--indels` from 0 to 13000) is stored in `data/simulated-data/indel-skew.sweep.tsv` (columns: indels, IoverD, metric, tps, tpa_bytes, paf_bytes, ratio; the table keeps I/D up to 56.28).
+
 The simulator draws each edit as mismatch/insertion/deletion with equal probability, so simulated indels are balanced (I/D ~ 1.0). The `--indels NUM,LENGTH` option adds extra deletions into the text, which appear as insertions in the query->target CIGAR, giving an insertion-skewed dataset to test DB-TP's sensitivity to an indel bias. We run at 10 Kb so the tracepoint streams (not per-record metadata) dominate the TPA, making the storage ratios meaningful. `--indels 2200` gives I/D ~ 5 at 10 Kb (calibrate per length; the simulator is unseeded so exact values vary):
 
 ```shell
@@ -660,32 +676,25 @@ for f in bal skew; do
 done
 ```
 
-### Index size and optional compression layer
+### TPA index sizes
 
-Index: one varint offset per alignment record. Encode+compress each primate target, then compare
-`.tpa.idx` against `.tpa` (16 targets, 566,038 alignments):
+Run after the benchmark above, which keeps each job's tp.paf in `encode/`. Reproduces `data/simulated-data/fltp-tpa-index-sizes.tsv` byte for byte (checked 2026-11-06 on the 10k inputs). The real-data file `data/real-data/fltp-tpa-index-sizes.tsv` (2026-08-06) has no recorded command; its per-target tpa_bytes differ from `<ds>.benchmark.results.tsv`, but the totals used in Table S2 agree to 0.0001%.
 
 ```shell
-for m in diagonal-distance edit-distance; do
-  for f in $scratch_dir/t2t-ape-pangenome/*.paf.gz; do
-    b=$(basename "$f" .p70.aln.paf.gz)
-    zcat "$f" | $cigzip encode --paf - --type standard --complexity-metric $m --max-complexity 32 \
-        --distance gap-affine2p --penalties 5,8,2,24,1 -o $b.$m.tp.paf
-    $cigzip compress -i $b.$m.tp.paf --type standard --complexity-metric $m --max-complexity 32 \
-        --strategy "huffman-nocomp;2d-delta-nocomp" -o $b.$m.tpa
-    echo "$b $m $(stat -c%s $b.$m.tpa.idx) / $(stat -c%s $b.$m.tpa)"
+# Index sizes for Supplementary Section 7, from the benchmark's tp.paf (cigzip compress writes <tpa>.idx)
+out=$dir_base/simulated-data/fltp-tpa-index-sizes.tsv
+echo -e "l\te\ttp_type\tmc\tdistance\trecords\ttpa_bytes\tidx_bytes" > $out
+for tp in fastga fastga-no-diff; do
+  for l in 100 1000 10000 100000; do
+    for e in 0.001 0.01 0.05 0.10 0.20; do
+      s="huffman-nocomp;huffman-nocomp"; [ $tp = fastga-no-diff ] && s="huffman-nocomp"
+      tp_paf=$dir_base/simulated-data/encode/set_${l}_$(echo $e | sed 's/\.//g').$tp.none.100.high.tp.paf
+      $cigzip compress --input $tp_paf --output $scratch_dir/idx.tpa --type $tp --max-complexity 100 --strategy "$s" --distance edit 2> /dev/null
+      echo -e "$l\t$(awk -v e=$e 'BEGIN{print e+0}')\t$tp\t100\tedit\t$(wc -l < $tp_paf)\t$(stat -c%s $scratch_dir/idx.tpa)\t$(stat -c%s $scratch_dir/idx.tpa.idx)" >> $out
+    done
   done
 done
-```
-
-Optional per-record compression layer: the `-nocomp` suffix pins it off (and is also the default
-when no suffix is given), `-zstd` / `-bgzip` turn it on. Over the 20 simulated conditions:
-
-```shell
-for layer in nocomp zstd bgzip; do
-  $cigzip compress -i $prefix.tp.paf --type standard --complexity-metric $cm --max-complexity 32 \
-     --strategy "huffman-$layer;2d-delta-$layer" -o $prefix.$layer.tpa
-done
+rm -f $scratch_dir/idx.tpa $scratch_dir/idx.tpa.idx
 ```
 
 ## Real data
@@ -732,11 +741,6 @@ find . -maxdepth 1 -name "*.paf" ! -name "HPRCy1-vs-*" -print0 | xargs -0 cat | 
 find . -maxdepth 1 -name "*.paf.gz" ! -name "HPRCy1-vs-*" -print0 | xargs -0 cat | wc -c | awk '{print $1/1024/1024/1024}' # 21.243 GBs
 # CIGAR strings only (cg:Z: tag content, excluding the "cg:Z:" prefix)
 find . -maxdepth 1 -name "*.paf" ! -name "HPRCy1-vs-*" -print0 | xargs -0 cat | awk -F'\t' '{ for (i=13; i<=NF; i++) if (substr($i,1,5)=="cg:Z:") total += length($i) - 5 } END { print total/1024/1024/1024 " GBs" }' # 78.8078 GBs
-# including HPRCy1-vs-*
-find . -maxdepth 1 -name "*.paf" -print0 | xargs -0 cat | wc -c | awk '{print $1/1024/1024/1024}' # 545.929 GBs
-find . -maxdepth 1 -name "*.paf.gz" -print0 | xargs -0 cat | wc -c | awk '{print $1/1024/1024/1024}' # 147.705 GBs
-# CIGAR strings only (cg:Z: tag content, excluding the "cg:Z:" prefix)
-find . -maxdepth 1 -name "*.paf" -print0 | xargs -0 cat | awk -F'\t' '{ for (i=13; i<=NF; i++) if (substr($i,1,5)=="cg:Z:") total += length($i) - 5 } END { print total/1024/1024/1024 " GBs" }' # 545.126 GBs
 ```
 
 Alignment statistics:
@@ -744,22 +748,6 @@ Alignment statistics:
 ```shell
 python3 $dir_base/scripts/paf_alignment_stats.py -t 16 --min-identity 0.0 *.paf.gz > t2t-ape-pangenome.aln-stats.tsv
 python3 $dir_base/scripts/paf_alignment_stats.py -t 48 --min-identity 0.0 *.paf > hprcv2-25k.aln-stats.tsv
-```
-
-TPA random-access index size vs tracepoint data (one varint byte-offset per alignment record; the .tpa.idx file is excluded from reported storage):
-
-```shell
-# Point tpa_dir at the directory holding the *.tpa and matching *.tpa.idx files
-for tpa_dir in /scratch/hprcv2-25k-tpas /scratch/t2t-ape-pangenome-tpas; do
-  echo "## $tpa_dir"
-  tpa=$(find "$tpa_dir" -name "*.tpa"     -print0 | xargs -0 stat -c%s | awk '{s+=$1} END {print s}')
-  idx=$(find "$tpa_dir" -name "*.tpa.idx" -print0 | xargs -0 stat -c%s | awk '{s+=$1} END {print s}')
-  awk -v tpa="$tpa" -v idx="$idx" 'BEGIN {
-    printf "tpa = %.3f GiB, idx = %.3f GiB, idx/tpa = %.2f%%\n", tpa/1024^3, idx/1024^3, idx/tpa*100
-  }'
-done
-# Human  (EB-TP delta=128): tpa = 23.348 GiB, idx = 1.443 GiB, idx/tpa = 6.18%
-# Primate (EB-TP delta=128): tpa = 0.700 GiB, idx = 0.002 GiB, idx/tpa = 0.29%
 ```
 
 Score distributions (gap-affine2p scores from CIGARs):
@@ -884,8 +872,8 @@ Real data - PAF CIGAR -> PAF TRACEPOINTS -> TPA -> PAF TRACEPOINTS -> PAF CIGAR:
 #   (cg:Z: for CIGAR, tp:Z: for tracepoints) - excludes so:i:, sc:i:, etc.
 
 # Benchmark parameters
-MC_LIST="32 64 128 256"         # EB-TP/DB-TP max-complexity values (mc=16 runs only as the bootstrap warm-up below, excluded from reporting)
-FASTGA_MC_LIST="100 500 1000"  # FL-TP trace spacings (fastga scaling)
+MC_LIST="16 32 48 64 80 96 112 128 256 512 1024"  # EB-TP/DB-TP max-complexity values (same as the simulations); the EB16 row in the loop overwrites the bootstrap warm-up row
+FASTGA_MC_LIST="100 200 300 400 500 1000 1500 2000 2500 3000"  # FL-TP trace spacings (fastga scaling; same as the simulations)
 
 BENCH_METHODS="ebdb fltptpa fltp1aln"
 RUN_TAG="all"
@@ -931,7 +919,7 @@ run_benchmark_real() {
     job_scratch="$scratch_dir/real_jobs/$prefix"
 
     # --- Resume ---
-    # PTe mc=16 bootstrap warm-up is never checkpointed, so every re-run repeats it first
+    # mc=16 is never skipped: every re-run repeats the warm-up, then EB16/DB16 in the loop
     ckpt_dir="$TMP_DIR/$(echo "$BENCH_METHODS" | tr -s ' ' '-')${RUN_TAG:+-$RUN_TAG}"; mkdir -p "$ckpt_dir"
     ckpt="$ckpt_dir/$prefix.result.tsv"
     if [ "$MC" != "16" ] && [ -s "$ckpt" ] && iteration_ok "$ckpt"; then
@@ -1048,7 +1036,7 @@ run_benchmark_real() {
             || { echo "ERROR: PAFtoALN failed for $dataset/$paf_name (mc=$MC) after 3 attempts: $(tail -1 "$encode_log")" >&2; keep_fail_logs; rm -rf "$job_scratch"; return 1; }
         encode_runtime=$(parse_time_log "$encode_log"); encode_memory=$(parse_memory_log "$encode_log")
         size_1aln=$(wc -c < "$aln_file")
-        num_tps=$($ONEview "$aln_file" 2>/dev/null | awk '$1=="T"{s+=$2} END{printf "%.0f\n", s}')   # %.0f, not print: awk renders >2^31 as %.6g
+        num_tps=$($ONEview -H "$aln_file" 2>/dev/null | awk '$1=="+" && $2=="T"{s=$3} END{printf "%.0f\n", s}')   # header "+ T" = total T list length, same as summing every T line (A/B 2026-10-25), 0.05 s instead of 32-66 s
 
         # decode: ALNtoPAF -x reconstructs the optimal =/X CIGAR.
         # Retry: like PAFtoALN, ALNtoPAF -x -T96 can hit a rare, load-dependent transient failure
@@ -1122,15 +1110,9 @@ run_benchmark_real() {
     awk "$extract_tp_cols" "$tp_paf_full" > "$tp_paf"
     size_tp=$(wc -c < "$tp_paf")
 
-    num_tps=$(awk -F'\t' '{
-        for (i = 13; i <= NF; i++) {
-            if ($i ~ /^tp:Z:/) {
-                val = substr($i, 6)
-                if (val != "") { n = split(val, arr, ";"); sum += n }
-                break
-            }
-        }
-    } END { printf "%.0f\n", sum }' "$tp_paf")   # %.0f, not print: awk renders >2^31 as %.6g
+    # Tracepoints = ';' in the tp:Z: column (13th of $tp_paf) + non-empty tp:Z: fields.
+    # Same count as the awk split() it replaces (A/B 2026-10-25), up to 1.7x faster on FL-TP l=100.
+    num_tps=$(( $(cut -f13 "$tp_paf" | tr -cd ';' | wc -c) + $(cut -f13 "$tp_paf" | grep -c '^tp:Z:.') ))
 
     # --- COMPRESS ---
     \time -v $cigzip compress \
@@ -1166,6 +1148,7 @@ run_benchmark_real() {
         --sequence-files "$gdb_seq" \
         --type $tp_type \
         $cm_args \
+        $fastga_contigs_args \
         --max-complexity $MC \
         $dist_args \
         --memory-mode $mem_mode \
@@ -1354,12 +1337,16 @@ run_real_dataset() {
             [ $(( (_shard_i - 1) % SHARD_N )) -eq "${SHARD_ID:-0}" ] || continue
         fi
         local paf_basename=$(basename "$paf")
+        # Or TARGET_LIST=<file of PAF.gz basenames>: this node runs only those (load-balanced split)
+        [ -z "${TARGET_LIST:-}" ] || grep -qxF "$paf_basename" "$TARGET_LIST" || continue
         local scratch_paf="$scratch_dir/$paf_basename"
         local input_paf="$scratch_dir/${paf_basename%.paf.gz}.paf"
         # A finished target is marked here, so a resume skips it before the copy+zcat+prep below.
         local ckpt_dir="$TMP_DIR/$(echo "$BENCH_METHODS" | tr -s ' ' '-')${RUN_TAG:+-$RUN_TAG}"
         local target_done="$ckpt_dir/.${paf_basename%.paf.gz}.done"
-        if [ -f "$target_done" ]; then
+        # The marker stores the parameter lists: a new value re-opens the target, done iterations SKIP.
+        local done_key="MC_LIST=$MC_LIST FASTGA_MC_LIST=$FASTGA_MC_LIST"
+        if [ "$(cat "$target_done" 2>/dev/null)" = "$done_key" ]; then
             echo "SKIP (target already complete): $dataset/${paf_basename%.paf.gz}"
             continue
         fi
@@ -1376,7 +1363,7 @@ run_real_dataset() {
 
         # --- Bootstrap warm-up: EB-TP mc=16. Runs FIRST to warm the FS cache / stabilize timings; excluded
         #     from reporting. Needs FASTAs, so only when a FASTA-using method is selected; fltp1aln-only
-        #     (GDB-only node) has no warm-up. mc=16 is NOT in MC_LIST, so this is the sole mc=16 row. ---
+        #     (GDB-only node) has no warm-up. With ebdb, the EB16 run in the loop below overwrites its row. ---
         if want_method ebdb || want_method fltptpa || want_method fltptpa_diff || want_method fltptpa_nodiff; then
             run_benchmark_real "$dataset" "$input_paf" "$seqs" "edit-distance" "$dir_base" "$cigzip" "$TMP_DIR" 16 "gap-affine2p"
         fi
@@ -1415,7 +1402,7 @@ run_real_dataset() {
         if want_method fltp1aln || want_method fltp1aln_nodiff; then run_benchmark_real "$dataset" "$fltp_paf" "$seqs" "fastga-native-nodiff" "$dir_base" "$cigzip" "$TMP_DIR" 100 "edit"; fi
         # ================= end FL-TP 1aln ================================================================
 
-        mkdir -p "$ckpt_dir" && touch "$target_done"
+        mkdir -p "$ckpt_dir" && echo "$done_key" > "$target_done"
         rm -f "$input_paf" "$nodegen_paf" "$fltp_paf"
     done
     # Rebuild the report atomically from the persisted per-iteration checkpoints (this run's new rows
@@ -1507,10 +1494,30 @@ Supplementary figures S1-S3 (delta effect, tracepoint counts, score distribution
 # Input:  data/simulated-data/benchmark.results.tsv
 #         data/real-data/hprcv2-25k.input-score-frequency.tsv
 #         data/real-data/t2t-ape-pangenome.input-score-frequency.by-target.tsv
+#         data/simulated-data/fltp-tpa-index-sizes.tsv
 # Output: figS1_delta_effect.png/.pdf, figS2_tracepoint_counts.png/.pdf,
-#         figS3_score_distributions.png/.pdf
+#         figS3_score_distributions.png/.pdf, figS7_absolute_sizes.png/.pdf,
+#         figS10_fltp_implementation.png/.pdf
 # Deps:   tidyverse, ggplot2, patchwork, cowplot, ggh4x
 Rscript scripts/plotting/plot-supp-figures.R
+```
+
+Supplementary figure with reconstruction time split into decompression and re-alignment:
+
+```shell
+# Input:  data/simulated-data/benchmark.results.tsv
+# Output: figS9_reconstruction_breakdown.png/.pdf
+# Deps:   tidyverse, ggh4x
+Rscript scripts/plotting/plot-reconstruction-breakdown.R
+```
+
+TPA (with its index) versus FASTGA 1aln totals, Table S2 and Supplementary Section 7:
+
+```shell
+# Input:  data/{real,simulated}-data/fltp-tpa-index-sizes.tsv, the benchmark tables
+# Output: printed to stdout
+# Deps:   tidyverse
+Rscript scripts/compute_tpa_vs_1aln.R
 ```
 
 Space-time tradeoff (stored size vs reconstruction time, all methods across their parameter sweeps):
@@ -1545,13 +1552,13 @@ python3 scripts/plotting/cigar_dotplot.py \
   --cigzip $cigzip
 ```
 
-Compute compression statistics reported in figure captions and text:
+Generate Supplementary Table with average tracepoints per alignment as a LaTeX tabular:
 
 ```shell
 # Input:  data/simulated-data/benchmark.results.tsv
-# Output: printed to stdout
-# Deps:   tidyverse
-Rscript scripts/compute_compression_stats.R
+# Output: LaTeX tabular on stdout, diagnostics on stderr
+# Deps:   python3 (standard library)
+python3 scripts/make_table_s3.py > table_s4.tex
 ```
 
 ## ES-2bit comparison on simulated pangenomes
@@ -1559,9 +1566,9 @@ Rscript scripts/compute_compression_stats.R
 Compare ES-2bit (drop all `=` ops, store each `I`/`X`/`D` in 2 bits) against FL-TP (l=100), EB-TP (δ=32), and DB-TP (b=32).
 
 ```shell
-zenodo=/home/guarracino/Desktop/Guarracino/tracepoints/zenodo/simulated-pangenomes
+zenodo=/home/guarracino/Desktop/Dropbox-ASU/Guarracino/tracepoints/zenodo/simulated-pangenomes
 tracepoints_dir=/home/guarracino/git/tracepoints
-out_dir=/home/guarracino/Desktop/Guarracino/tracepoints/es2bit-bench
+out_dir=/home/guarracino/Desktop/Dropbox-ASU/Guarracino/tracepoints/es2bit-bench
 mkdir -p "$out_dir"
 
 cargo build --release --manifest-path "$tracepoints_dir/Cargo.toml" --example es2bit_bench

@@ -46,10 +46,10 @@ def parse_cigar(cigar):
     return query_len, target_len, matches, aln_block_len
 
 
-def convert_to_paf(input_file, output_file):
+def convert_to_paf(input_file, output_file, first_id=1):
     """Convert alignment file to PAF format."""
     with open(input_file, 'r') as f_in, open(output_file, 'w') as f_out:
-        query_id = 1  # Counter starting from 1
+        query_id = first_id  # Counter starting from 1 (or from first_id for a chunk)
 
         for line in f_in:
             line = line.strip()
@@ -109,14 +109,15 @@ def convert_to_paf(input_file, output_file):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Usage: python3 out_to_paf.py <input_file> <output_file>")
+    if len(sys.argv) not in (3, 4):
+        print("Usage: python3 out_to_paf.py <input_file> <output_file> [first_id, default 1]")
         print("Example: python3 out_to_paf.py set_100_001.out set_100_001.paf")
         sys.exit(1)
 
     input_file = sys.argv[1]
     output_file = sys.argv[2]
+    first_id = int(sys.argv[3]) if len(sys.argv) == 4 else 1
 
-    convert_to_paf(input_file, output_file)
+    convert_to_paf(input_file, output_file, first_id)
     print(f"Converted {input_file} to {output_file}")
 
