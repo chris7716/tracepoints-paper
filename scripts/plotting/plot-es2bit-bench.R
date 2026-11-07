@@ -183,7 +183,7 @@ save_plot(combo_plot(df, "disk_B_per_e", "gz_B_per_e", "Bytes per edit operation
 df_no_cigar <- df %>% filter(method != "CIGAR TEXT")
 fmt_k <- scales::label_number(scale_cut = scales::cut_short_scale())
 
-decode_panel <- function(dfp, low_max = NULL, high_max = NULL, show_y = TRUE, show_x = FALSE) {
+decode_panel <- function(dfp, low_max = NULL, show_y = TRUE, show_x = FALSE) {
   lab_y <- if (show_y) "Decode ns per edit operation" else NULL
   lab_x <- if (show_x) "Error rate" else NULL
   if (is.null(low_max)) {
@@ -194,6 +194,7 @@ decode_panel <- function(dfp, low_max = NULL, high_max = NULL, show_y = TRUE, sh
                          expand = expansion(mult = c(0, 0.05))) +
       labs(x = lab_x, y = lab_y, fill = "Method") + common_theme)
   }
+  high_max <- max(dfp$dec_ns_per_e)   # top of the broken axis = data max
   lo_end <- 0.6; gp <- 0.03; hi_start <- lo_end + gp
   lo_s <- lo_end / low_max; hi_s <- (1 - hi_start) / (high_max - low_max)
   tf <- function(y) ifelse(y <= low_max, y * lo_s, hi_start + (y - low_max) * hi_s)
@@ -211,9 +212,9 @@ decode_panel <- function(dfp, low_max = NULL, high_max = NULL, show_y = TRUE, sh
     labs(x = lab_x, y = lab_y, fill = "Method") + common_theme
 }
 pick <- function(lab) df_no_cigar %>% filter(n_label == lab)
-p_dec <- ((decode_panel(pick("100 bp")) | decode_panel(pick("1 Kbp"), 600, 1.8e3, show_y = FALSE)) /
+p_dec <- ((decode_panel(pick("100 bp")) | decode_panel(pick("1 Kbp"), 600, show_y = FALSE)) /
           (decode_panel(pick("10 Kbp"), show_x = TRUE) |
-           decode_panel(pick("100 Kbp"), 2.0e3, 4.6e3, show_y = FALSE, show_x = TRUE))) +
+           decode_panel(pick("100 Kbp"), show_y = FALSE, show_x = TRUE))) +
   plot_layout(guides = "collect") & theme(legend.position = "bottom")
 save_plot(p_dec, "es2bit_decode_ns_per_edit", w = 10, h = 8)
 save_plot(bar_plot(df_no_cigar, "enc_ns_per_e",  "Encode ns per edit operation",      y_labels = fmt_k), "es2bit_encode_ns_per_edit", w = 10, h = 8)

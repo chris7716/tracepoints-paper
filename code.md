@@ -280,9 +280,9 @@ run_benchmark() {
     elif [ "$tp_type" = "fastga-no-diff" ]; then
         strategy_args="--strategy huffman-nocomp"
     elif [ "$cm" = "edit-distance" ]; then
-        strategy_args="--strategy huffman-nocomp;2d-delta-nocomp"
+        strategy_args="--strategy huffman-nocomp;2d-delta-huffman-nocomp"
     else  # diagonal-distance
-        strategy_args="--strategy huffman-nocomp;2d-delta-nocomp"
+        strategy_args="--strategy huffman-nocomp;2d-delta-huffman-nocomp"
     fi
 
     # Repeat 10 times for stable averages: standard with mc<=64, or any fastga variant on short sequences (l < 10k). Large fastga jobs are slow, so they run once.
@@ -669,7 +669,7 @@ for f in bal skew; do
     $cigzip encode --paf $f.paf --type standard --complexity-metric $m --max-complexity 32 --distance edit -o $f.$m.tp.paf
     tps=$(grep -o 'tp:Z:[^[:space:]]*' $f.$m.tp.paf | awk -F';' '{s+=NF} END{print s}')
     $cigzip compress --input $f.$m.tp.paf --type standard --complexity-metric $m --max-complexity 32 \
-      --strategy "huffman-nocomp;2d-delta-nocomp" --output $f.$m.tpa
+      --strategy "huffman-nocomp;2d-delta-huffman-nocomp" --output $f.$m.tpa
     tpa=$(stat -c%s $f.$m.tpa)
     awk -v m=$m -v tp=$tps -v t=$tpa -v p=$paf 'BEGIN{printf "  %-18s tps=%d TPA=%d B ratio=%.4f\n",m,tp,t,t/p}'
   done
@@ -1087,7 +1087,7 @@ run_benchmark_real() {
     elif [ "$cm" = "edit-distance" ]; then
         tp_type="standard"; cm_args="--complexity-metric $cm"; strategy_args="--strategy huffman-nocomp;2d-delta-nocomp"
     else  # diagonal-distance
-        tp_type="standard"; cm_args="--complexity-metric $cm"; strategy_args="--strategy huffman-nocomp;2d-delta-nocomp"
+        tp_type="standard"; cm_args="--complexity-metric $cm"; strategy_args="--strategy huffman-nocomp;2d-delta-huffman-nocomp"
     fi
 
     mem_mode="adaptive"
