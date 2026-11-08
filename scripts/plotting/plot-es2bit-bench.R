@@ -82,7 +82,7 @@ common_theme <- theme_bw(base_size = 15) +
 
 save_plot <- function(p, name, w = 10, h = 6) {
   ggsave(file.path(out_dir, paste0(name, ".pdf")), p, width = w, height = h)
-  ggsave(file.path(out_dir, paste0(name, ".png")), p, width = w, height = h, dpi = 300)
+  if (system2("bash", c("scripts/plotting/crop-pdf.sh", file.path(out_dir, paste0(name, ".pdf")))) != 0) stop("crop-pdf.sh failed")
   cat("  saved", name, "\n")
 }
 

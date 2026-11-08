@@ -160,10 +160,9 @@ p_comp_3rates <- (p_3r_row1 / p_3r_row2) +
   plot_layout(heights = c(1, 1), guides = "collect") &
   theme(legend.position = "bottom")
 
-ggsave(file.path(fig_dir, "compression_ratios.png"), p_comp_3rates, width = 10, height = 6, dpi = 300, bg = "white")
 ggsave(file.path(fig_dir, "compression_ratios.pdf"), p_comp_3rates, width = 10, height = 6, bg = "white")
 
-message("Figure saved: compression_ratios.png")
+message("Figure saved: compression_ratios.pdf")
 
 # =============================================================================
 # Figure 2: Decoding cost (runtime + memory)
@@ -373,10 +372,9 @@ g1_dc$widths <- maxWidth_dc
 g2_dc$widths <- maxWidth_dc
 p_decoding_cost <- grid.arrange(g1_dc, g2_dc, ncol = 1, heights = c(0.45, 0.55))
 
-ggsave(file.path(fig_dir, "decoding_cost_broken.png"), p_decoding_cost, width = 10, height = 6, dpi = 300, bg = "white")
 ggsave(file.path(fig_dir, "decoding_cost_broken.pdf"), p_decoding_cost, width = 10, height = 6, bg = "white")
 
-message("Figure saved: decoding_cost_broken.png/pdf")
+message("Figure saved: decoding_cost_broken.pdf")
 
 # --- Log-scale version in milliseconds (Figure 3 in the manuscript) ---
 # Reviewer requested log time axes; ms keeps all values >1 so log bars grow upward.
@@ -416,7 +414,9 @@ p_decoding_cost_log <- (p_dc_runtime_log / p_dc_memory_log) +
   theme(legend.position = "bottom") &
   guides(fill = guide_legend(nrow = 1))
 
-ggsave(file.path(fig_dir, "decoding_cost.png"), p_decoding_cost_log, width = 10, height = 6, dpi = 300, bg = "white")
-ggsave(file.path(fig_dir, "decoding_cost.pdf"), p_decoding_cost_log, width = 10, height = 6, bg = "white")
+ggsave(file.path(fig_dir, "figS12_decoding_cost.pdf"), p_decoding_cost_log, width = 10, height = 6, bg = "white")
 
-message("Figure saved: decoding_cost.png/pdf")
+message("Figure saved: figS12_decoding_cost.pdf")
+
+# Crop white margins of the paper PDFs
+if (system2("bash", c("scripts/plotting/crop-pdf.sh", file.path(fig_dir, c("compression_ratios.pdf", "figS12_decoding_cost.pdf")))) != 0) stop("crop-pdf.sh failed")

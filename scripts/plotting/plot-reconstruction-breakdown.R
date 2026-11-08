@@ -6,7 +6,7 @@
 # (FL-TP l=100, EB-TP delta=32, DB-TP b=32), faceted method x sequence length.
 #
 # Input:  data/simulated-data/benchmark.results.tsv
-# Output: paper/figures/figS9_reconstruction_breakdown.{png,pdf}
+# Output: paper/figures/figS10_reconstruction_breakdown.pdf
 # Deps:   tidyverse, ggh4x
 
 suppressPackageStartupMessages({ library(tidyverse); library(ggh4x) })
@@ -50,6 +50,8 @@ p <- ggplot(long, aes(error_label, t, fill = stage)) +
         axis.text.x = element_text(angle = 45, hjust = 1, size = 9))
 
 dir.create(fig_dir, showWarnings = FALSE, recursive = TRUE)
-ggsave(file.path(fig_dir, "figS9_reconstruction_breakdown.png"), p, width = 11, height = 7.5, dpi = 300, bg = "white")
-ggsave(file.path(fig_dir, "figS9_reconstruction_breakdown.pdf"), p, width = 11, height = 7.5, bg = "white")
-message("Figure saved: ", file.path(fig_dir, "figS9_reconstruction_breakdown.{png,pdf}"))
+ggsave(file.path(fig_dir, "figS10_reconstruction_breakdown.pdf"), p, width = 11, height = 7.5, bg = "white")
+message("Figure saved: ", file.path(fig_dir, "figS10_reconstruction_breakdown.pdf"))
+
+# Crop white margins of the paper PDFs
+if (system2("bash", c("scripts/plotting/crop-pdf.sh", file.path(fig_dir, "figS10_reconstruction_breakdown.pdf"))) != 0) stop("crop-pdf.sh failed")

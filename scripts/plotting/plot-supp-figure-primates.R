@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 
-# Supplementary Figure S4: Primate Pangenome Performance
+# Supplementary Figure S5: Primate Pangenome Performance
 # 2x2 grid showing TPA size, tracepoints, decode time, and peak memory
 # across 16 target genomes ordered by phylogeny
 
@@ -177,9 +177,7 @@ p_combined <- p_combined +
   theme(plot.tag = element_text(size = 16, face = "bold"))
 
 # Save
-ggsave(file.path(fig_dir, "figS4_primate_performance.png"),
-       p_combined, width = 12, height = 8, dpi = 300, bg = "white")
-ggsave(file.path(fig_dir, "figS4_primate_performance.pdf"),
+ggsave(file.path(fig_dir, "figS5_primate_performance.pdf"),
        p_combined, width = 12, height = 8, bg = "white", device = cairo_pdf)
 
 # Variant for reviewer: all four panels on log10 scale
@@ -192,12 +190,10 @@ p_combined_alllog <- (p_tpa_size_log + p_tracepoints_log) / (p_decode_time + p_p
 p_combined_alllog <- p_combined_alllog +
   plot_annotation(tag_levels = "A") &
   theme(plot.tag = element_text(size = 16, face = "bold"))
-ggsave(file.path(fig_dir, "figS4_primate_performance_alllog.png"),
-       p_combined_alllog, width = 12, height = 8, dpi = 300, bg = "white")
-ggsave(file.path(fig_dir, "figS4_primate_performance_alllog.pdf"),
+ggsave(file.path(fig_dir, "figS5_primate_performance_alllog.pdf"),
        p_combined_alllog, width = 12, height = 8, bg = "white", device = cairo_pdf)
 
-message("Figure saved: figS4_primate_performance.png/pdf")
+message("Figure saved: figS5_primate_performance.pdf")
 
 # Print summary statistics
 cat("\n=== Summary Statistics ===\n")
@@ -211,3 +207,6 @@ df %>%
     .groups = "drop"
   ) %>%
   print()
+
+# Crop white margins of the paper PDFs
+if (system2("bash", c("scripts/plotting/crop-pdf.sh", file.path(fig_dir, "figS5_primate_performance.pdf"))) != 0) stop("crop-pdf.sh failed")

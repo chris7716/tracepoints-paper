@@ -12,7 +12,7 @@
 # their log-like spread.
 #
 # Input:  data/simulated-data/benchmark.results.tsv
-# Output: paper/figures/figS8_space_time_tradeoff.{png,pdf}
+# Output: paper/figures/figS9_space_time_tradeoff.pdf
 # Deps:   tidyverse, ggplot2, scales, ggrepel, ggh4x
 
 suppressPackageStartupMessages({
@@ -122,6 +122,8 @@ p <- ggplot(allpts, aes(x = size, y = time, color = method, shape = method)) +
   )
 
 dir.create(fig_dir, showWarnings = FALSE, recursive = TRUE)
-ggsave(file.path(fig_dir, "figS8_space_time_tradeoff.png"), p, width = 16, height = 15, dpi = 300, bg = "white")
-ggsave(file.path(fig_dir, "figS8_space_time_tradeoff.pdf"), p, width = 16, height = 15, bg = "white")
-message("Figure saved: ", file.path(fig_dir, "figS8_space_time_tradeoff.{png,pdf}"))
+ggsave(file.path(fig_dir, "figS9_space_time_tradeoff.pdf"), p, width = 16, height = 15, bg = "white")
+message("Figure saved: ", file.path(fig_dir, "figS9_space_time_tradeoff.pdf"))
+
+# Crop white margins of the paper PDFs
+if (system2("bash", c("scripts/plotting/crop-pdf.sh", file.path(fig_dir, "figS9_space_time_tradeoff.pdf"))) != 0) stop("crop-pdf.sh failed")

@@ -36,7 +36,7 @@ common_theme <- theme_bw(base_size = 15) +
   )
 
 # =============================================================================
-# Figure S1: Effect of δ parameter on compression ratio
+# Figure S2: Effect of δ parameter on compression ratio
 # =============================================================================
 
 # Parameter sweeps: EB-TP/DB-TP vary the threshold (delta, b); FL-TP varies the
@@ -110,13 +110,12 @@ p_delta <- ggplot() +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
         legend.box = "vertical", legend.spacing.y = unit(12, "pt"))
 
-ggsave(file.path(fig_dir, "figS1_delta_effect.png"), p_delta, width = 10, height = 8.3, dpi = 300, bg = "white")
-ggsave(file.path(fig_dir, "figS1_delta_effect.pdf"), p_delta, width = 10, height = 8.3, bg = "white")
+ggsave(file.path(fig_dir, "figS2_delta_effect.pdf"), p_delta, width = 10, height = 8.3, bg = "white")
 
-message("Figure S1 saved: figS1_delta_effect.png")
+message("Figure S2 saved: figS2_delta_effect.pdf")
 
 # =============================================================================
-# Figure S2: Number of tracepoints comparison
+# Figure S3: Number of tracepoints comparison
 # =============================================================================
 
 df_tp_counts <- data %>%
@@ -176,13 +175,12 @@ p_tp_counts <- wrap_plots(
   ncol = 2) +
   plot_layout(guides = "collect", axis_titles = "collect") & theme(legend.position = "bottom")
 
-ggsave(file.path(fig_dir, "figS2_tracepoint_counts.png"), p_tp_counts, width = 10, height = 6, dpi = 300, bg = "white")
-ggsave(file.path(fig_dir, "figS2_tracepoint_counts.pdf"), p_tp_counts, width = 10, height = 6, bg = "white")
+ggsave(file.path(fig_dir, "figS3_tracepoint_counts.pdf"), p_tp_counts, width = 10, height = 6, bg = "white")
 
-message("Figure S2 saved: figS2_tracepoint_counts.pdf")
+message("Figure S3 saved: figS3_tracepoint_counts.pdf")
 
 # =============================================================================
-# Figure S3: Alignment score distributions, raw and length-normalized, by target
+# Figure S4: Alignment score distributions, raw and length-normalized, by target
 # =============================================================================
 
 score_dir <- file.path(data_dir, "real-data")
@@ -251,13 +249,12 @@ p_scores <- ggplot(df_scores_binned,
   common_theme +
   guides(fill = guide_legend(nrow = 1))
 
-ggsave(file.path(fig_dir, "figS3_score_distributions.png"), p_scores, width = 12, height = 7, dpi = 300, bg = "white")
-ggsave(file.path(fig_dir, "figS3_score_distributions.pdf"), p_scores, width = 12, height = 7, bg = "white")
+ggsave(file.path(fig_dir, "figS4_score_distributions.pdf"), p_scores, width = 12, height = 7, bg = "white")
 
-message("Figure S3 saved: figS3_score_distributions.pdf")
+message("Figure S4 saved: figS4_score_distributions.pdf")
 
 # =============================================================================
-# Figure S7: Absolute file sizes (simulated data) — complements main Fig 2
+# Figure S8: Absolute file sizes (simulated data) — complements main Fig 2
 # =============================================================================
 library(scales)
 
@@ -392,12 +389,11 @@ p_sizes <- p_sizes_row1 / p_sizes_row2 +
   theme(legend.position = "bottom") &
   guides(fill = guide_legend(nrow = 1))   # one row, matching Fig 2 (compression_ratios)
 
-ggsave(file.path(fig_dir, "figS7_absolute_sizes.png"), p_sizes, width = 10, height = 6, dpi = 300, bg = "white")
-ggsave(file.path(fig_dir, "figS7_absolute_sizes.pdf"), p_sizes, width = 10, height = 6, bg = "white")
-message("Figure S7 saved: figS7_absolute_sizes.pdf")
+ggsave(file.path(fig_dir, "figS8_absolute_sizes.pdf"), p_sizes, width = 10, height = 6, bg = "white")
+message("Figure S8 saved: figS8_absolute_sizes.pdf")
 
 # =============================================================================
-# Figure S10: FL-TP implementation/format comparison (cigzip TPA vs FASTGA .1aln)
+# Figure S11: FL-TP implementation/format comparison (cigzip TPA vs FASTGA .1aln)
 # Both share the SAME FL-TP segmentation (trace spacing 100); they differ only in
 # the storage format and the reconstruction tool (cigzip, Rust, TPA vs FASTGA, C,
 # .1aln), with and without per-segment diffs. This isolates the implementation
@@ -480,8 +476,10 @@ p_impl <- (p_impl_size / p_impl_time / p_impl_mem) +
   theme(legend.position = "bottom") &
   guides(fill = guide_legend(nrow = 1))
 
-ggsave(file.path(fig_dir, "figS10_fltp_implementation.png"), p_impl, width = 10, height = 9, dpi = 300, bg = "white")
-ggsave(file.path(fig_dir, "figS10_fltp_implementation.pdf"), p_impl, width = 10, height = 9, bg = "white")
-message("Figure S10 saved: figS10_fltp_implementation.pdf")
+ggsave(file.path(fig_dir, "figS11_fltp_implementation.pdf"), p_impl, width = 10, height = 9, bg = "white")
+message("Figure S11 saved: figS11_fltp_implementation.pdf")
 
 message("\nAll supplementary figures (S1, S2, S3, S7, S10) generated successfully!")
+
+# Crop white margins of the paper PDFs
+if (system2("bash", c("scripts/plotting/crop-pdf.sh", file.path(fig_dir, c("figS2_delta_effect.pdf", "figS3_tracepoint_counts.pdf", "figS4_score_distributions.pdf", "figS8_absolute_sizes.pdf", "figS11_fltp_implementation.pdf")))) != 0) stop("crop-pdf.sh failed")
